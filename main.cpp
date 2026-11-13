@@ -19,14 +19,15 @@ int main()
 // Start up our display (e.g. ncurses)
   init_display();
 
-// Init the game data!
-  if (!init_all_data()) {
-    debugmsg("Failed to init data!");
+// Asciiverse: folders first, so the data files are found from anywhere.
+  if (!set_directories()) {
+    debugmsg("Failed to set directories!");
     return 1;
   }
 
-  if (!set_directories()) {
-    debugmsg("Failed to set directories!");
+// Init the game data!
+  if (!init_all_data()) {
+    debugmsg("Failed to init data!");
     return 1;
   }
 

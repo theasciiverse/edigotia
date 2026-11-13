@@ -8,3 +8,6 @@ world.sav
 obj/
 save/
 cuss/demo*
+out/
+stage/
+dist/
