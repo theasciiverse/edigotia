@@ -1329,7 +1329,8 @@ bool Interface::load_game()
 
   while (true) {
     int new_index = i_load.get_int("list_cities");
-    if (new_index != cur_index && new_index > 0 && new_index < cities.size()) {
+    if (new_index != cur_index && new_index >= 0 && new_index < cities.size() &&
+        cities[new_index]) {
       cur_index = new_index;
       cur_city = cities[cur_index];
       i_load.set_data("text_race", Race_data[cur_city->get_race()]->name);
@@ -1346,6 +1347,8 @@ bool Interface::load_game()
 
       case '\n':
         if (cur_city) {
+// The game plays and saves GAME->city, so the loaded city has to be that one.
+          GAME->city = cur_city;
           pl_city = cur_city;
           return true;
         }

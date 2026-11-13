@@ -137,7 +137,17 @@ bool Game::save_game()
 {
 // Save the player's city.
   std::ofstream fout;
-  std::string filename = SAVE_DIR + "cities/" + city->get_name() + ".sav";
+  std::string dirname = SAVE_DIR + "cities";
+  if (!directory_exists(dirname) && !create_directory(dirname)) {
+    debugmsg("Unable to create directory '%s'.", dirname.c_str());
+    return false;
+  }
+  std::string filename = dirname + "/" + city->get_name() + ".sav";
+  fout.open(filename.c_str());
+  if (!fout.is_open()) {
+    debugmsg("Couldn't open %s for saving.", filename.c_str());
+    return false;
+  }
   fout << city->save_data();
 
   fout.close();
