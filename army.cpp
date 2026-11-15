@@ -268,6 +268,7 @@ Battle_report fight_battle(Troops& attackers, Race att_race,
 
   if (defenders.total() <= 0) {
     report.attacker_won = true;
+    report.summary = "There was no one to stand against them.";
     return report;
   }
   if (attackers.total() <= 0) {
@@ -430,6 +431,8 @@ glyph Army::get_glyph()
   glyph ret('&', c_ltred, c_black);
   if (player_owned) {
     ret.fg = c_white;
+  } else if (kingdom_uid == -2) {
+    ret.fg = c_ltgreen;   // Allies fighting for you
   } else if (order == ARMY_ORDER_RETURN) {
     ret.fg = c_ltgray;
   }

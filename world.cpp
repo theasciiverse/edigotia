@@ -123,6 +123,7 @@ World_design::~World_design()
 
 World_map::World_map()
 {
+  size = 0;  // Asciiverse: it was never set before set_size() checked it
 }
 
 World_map::~World_map()
@@ -751,7 +752,8 @@ Placing %d blobs [%d%%%%%%%%]",
 
 bool World_map::set_size(World_size Size)
 {
-  if (size <= 0) {
+// Asciiverse: this checked the old size (unset) instead of the new one.
+  if (Size < 0 || Size >= WORLD_SIZE_MAX) {
     debugmsg("World_map::set_size(%d) called!", Size);
     return false;
   }
@@ -853,7 +855,15 @@ bool World_map::load_from_file(std::string filename)
   std::getline(fin, name);
   int tmp_size, num_continents;
   fin >> tmp_size >> num_continents;
-  set_size( World_size(tmp_size) );
+// Asciiverse: the file holds the size in tiles, not the World_size; a small
+// world (50) was read back as a medium one.
+  World_size saved_size = WORLD_SIZE_MEDIUM;
+  for (int i = 0; i < WORLD_SIZE_MAX; i++) {
+    if (world_size_size( World_size(i) ) == tmp_size) {
+      saved_size = World_size(i);
+    }
+  }
+  set_size(saved_size);
   for (int i = 0; i < num_continents; i++) {
     Point p;
     fin >> p.x >> p.y;

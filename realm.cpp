@@ -205,6 +205,8 @@ void Realm::reset()
   end_text = "";
   start_year = 1400;
   next_army_uid = 0;
+  moving = false;
+  incoming.clear();
 }
 
 void Realm::link_cities()
@@ -528,7 +530,7 @@ bool Realm::load_body(std::string filename, std::vector<AI_city*>& pending_new)
     if (!army.load_data(fin)) {
       return false;
     }
-    armies.push_back(army);
+    add_army(army);
   }
 
   fin >> num;
@@ -1036,7 +1038,8 @@ bool Realm::sign_treaty(City* city, Treaty_type type)
     rel.opinion = 100;
   }
   std::stringstream ss;
-  ss << "You signed a " << treaty_name(type) << " with " << ai->get_name() <<
+  ss << "You signed " << (type == TREATY_ALLIANCE ? "an " : "a ") <<
+        treaty_name(type) << " with " << ai->get_name() <<
         " for a year.";
   player_message(MESSAGE_MINOR, ss.str());
   return true;
@@ -1486,7 +1489,7 @@ bool Realm::send_army(Troops troops, City* target)
     }
   }
   player->set_troops(home);
-  armies.push_back(army);
+  add_army(army);
   log_info("Army of %d sent to %s (%d days)", troops.total(),
            target->get_name().c_str(), days);
   return true;
@@ -1516,8 +1519,20 @@ void Realm::recall_army(int index)
   }
 }
 
+// New armies wait in incoming while the armies are moving, so the list is
+// never changed under a march in progress.
+void Realm::add_army(Army army)
+{
+  if (moving) {
+    incoming.push_back(army);
+  } else {
+    armies.push_back(army);
+  }
+}
+
 void Realm::move_armies()
 {
+  moving = true;
   for (int i = 0; i < armies.size(); i++) {
     Army& army = armies[i];
     army.days_out++;
@@ -1563,6 +1578,11 @@ soldiers are leaving it to walk home.");
       army_arrives(army);
     }
   }
+  moving = false;
+  for (int i = 0; i < incoming.size(); i++) {
+    armies.push_back(incoming[i]);
+  }
+  incoming.clear();
 // Clear away the armies that are gone.
   for (int i = 0; i < armies.size(); i++) {
     if (armies[i].troops.total() <= 0 || armies[i].order == ARMY_ORDER_NULL) {
@@ -1592,7 +1612,8 @@ void Realm::army_arrives(Army& army)
       }
     } else {
       AI_city* ai_home = dynamic_cast<AI_city*>(home);
-      if (ai_home && ai_home->owner_kingdom == army.kingdom_uid) {
+      if (ai_home && (ai_home->owner_kingdom == army.kingdom_uid ||
+                      army.kingdom_uid == -2)) {
         ai_home->garrison.add(army.troops);
       }
     }
@@ -1611,7 +1632,7 @@ void Realm::army_arrives(Army& army)
     AI_city* ai_target = dynamic_cast<AI_city*>(target);
     if (target == player) {
       std::stringstream ss;
-      ss << army.get_name() << " has come to your aid with " <<
+      ss << capitalize(army.get_name()) << " has come to your aid with " <<
             army.troops.total() << " soldiers!";
       player_message(MESSAGE_MAJOR, ss.str());
 // Fight any besiegers.
@@ -1682,6 +1703,8 @@ void Realm::army_arrives(Army& army)
     AI_city* ai_home = dynamic_cast<AI_city*>(home);
     still_enemy = (ai_home ? at_war_with_player(ai_home) :
                    kingdom_at_war_with_player(army.kingdom_uid));
+  } else if (army.kingdom_uid == -2) {
+    still_enemy = at_war_with_player(target);
   } else {
     AI_city* ai_target = dynamic_cast<AI_city*>(target);
     still_enemy = (ai_target && !relation(ai_target).vassal &&
@@ -1712,13 +1735,14 @@ void Realm::army_arrives(Army& army)
                                      player->get_race(), bonus);
     player->set_troops(defenders);
     if (rep.attacker_won) {
-      ss << army.get_name() << " has beaten your defenders and laid siege " <<
+      ss << capitalize(army.get_name()) << " has beaten your defenders and " <<
+            "laid siege " <<
             "to your city! " << rep.summary << "  Your keep will hold for " <<
             siege_length(player) << " days.";
       player_message(MESSAGE_URGENT, ss.str());
       army.order = ARMY_ORDER_SIEGE;
       army.siege_days = 0;
-      cancel_deals_with(target, "");
+      send_relief(player);
     } else {
       ss << "Your soldiers drove " << army.get_name() << " from your walls! " <<
             rep.summary;
@@ -1802,14 +1826,14 @@ void Realm::siege_turn(Army& army)
     int left = siege_length(player) - army.siege_days;
     if (left <= 0) {
       std::stringstream ss;
-      ss << army.get_name() << " has taken your keep.  " << player->get_name() <<
+      ss << capitalize(army.get_name()) << " has taken your keep.  " << player->get_name() <<
             " has fallen, and you are their prisoner.";
       end_game(GAME_END_FALLEN, ss.str());
     } else if (left <= 3 || army.siege_days % 4 == 0) {
       std::stringstream ss;
       ss << "Your city is besieged by " << army.get_name() << " (" <<
             army.troops.total() << " soldiers).  The keep can hold " << left <<
-            " more days.";
+            (left == 1 ? " more day." : " more days.");
       player_message(MESSAGE_URGENT, ss.str());
     }
     return;
@@ -1817,6 +1841,13 @@ void Realm::siege_turn(Army& army)
 
   AI_city* ai_target = dynamic_cast<AI_city*>(target);
   if (!ai_target) {
+    army.order = ARMY_ORDER_ATTACK;
+    recall_army(&army - &armies[0]);
+    return;
+  }
+// Allies stop when you make peace.
+  if (army.kingdom_uid == -2 && !at_war_with_player(ai_target)) {
+    ai_target->besieged = false;
     army.order = ARMY_ORDER_ATTACK;
     recall_army(&army - &armies[0]);
     return;
@@ -1896,6 +1927,18 @@ void Realm::conquer(Army& army, City* target)
     }
     army.order = ARMY_ORDER_ATTACK;
     recall_army(&army - &armies[0]);
+    return;
+  }
+
+// An ally's conquest is handed to you.
+  if (army.kingdom_uid == -2) {
+    make_vassal(ai_target);
+    ai_target->garrison = army.troops;
+    army.troops.clear();
+    army.order = ARMY_ORDER_NULL;
+    player_message(MESSAGE_MAJOR, "Your allies have taken " +
+                   ai_target->get_name() + ", and hand it to you as your " +
+                   "vassal.");
     return;
   }
 
@@ -2006,7 +2049,7 @@ void Realm::send_relief(City* besieged)
       helper->garrison.add(army.troops);
       continue;
     }
-    armies.push_back(army);
+    add_army(army);
     sent++;
     if (besieged == player) {
       std::stringstream ss;
@@ -2037,7 +2080,7 @@ void Realm::ai_launch_army(AI_city* from, City* target, int kingdom_uid)
     from->garrison.add(army.troops);
     return;
   }
-  armies.push_back(army);
+  add_army(army);
   if (target == player) {
     std::stringstream ss;
     ss << "Scouts report " << army.troops.total() << " soldiers marching on " <<
@@ -2068,6 +2111,40 @@ void Realm::launch_ai_armies()
       marching[ armies[i].kingdom_uid ]++;
     }
   }
+// Your allies march on your enemies (an army with kingdom_uid -2 fights for
+// you, and hands you what it takes).
+  for (int i = 0; i < cities.size(); i++) {
+    AI_city* ally = cities[i];
+    if (!relation(ally).has_treaty(TREATY_ALLIANCE) || ally->besieged ||
+        ally->garrison.fighters() < 60 || marching[-2] >= 1 || !one_in(3)) {
+      continue;
+    }
+    int send = troops_strength(ally->garrison, ally->get_race()) / 2;
+    AI_city* best = NULL;
+    int best_dist = 25;
+    for (int n = 0; n < cities.size(); n++) {
+      AI_city* enemy = cities[n];
+// Allies will not march on their own kingdom.
+      if (enemy->besieged || !at_war_with_player(enemy) ||
+          enemy->owner_kingdom == ally->owner_kingdom) {
+        continue;
+      }
+      int dist = rl_dist(ally->location, enemy->location);
+      int theirs = troops_strength(enemy->garrison, enemy->get_race(),
+                                   defense_bonus_for(enemy));
+      if (dist < best_dist && send > theirs) {
+        best = enemy;
+        best_dist = dist;
+      }
+    }
+    if (best) {
+      ai_launch_army(ally, best, -2);
+      marching[-2]++;
+      player_message(MESSAGE_MAJOR, "Your ally " + ally->get_name() +
+                     " marches on " + best->get_name() + " for you.");
+    }
+  }
+
   for (int i = 0; i < cities.size(); i++) {
     AI_city* from = cities[i];
     int k = from->owner_kingdom;
@@ -2091,7 +2168,15 @@ void Realm::launch_ai_armies()
 // Find the nearest enemy city we could take.
     City* best = NULL;
     int best_dist = 9999;
-    if (player_enemy) {
+// A baron dragged into the kingdom's war is under the kingdom's protection
+// (Whales: taxes "in exchange for their promise of protection"); enemies
+// march on your own city only in a war you made yourself, or once you are
+// cast out.
+    bool own_war = relation(from).at_war ||
+                   (player_war.count(k) && player_war[k] > 0) ||
+                   (excommunicated && player_kingdom() &&
+                    k == player_kingdom()->uid) || !player_kingdom();
+    if (player_enemy && own_war) {
       int pdist = rl_dist(from->location, player->location);
       int pstr = troops_strength(player->get_troops(), player->get_race(), 130);
       if (pdist < 30 && send_str > pstr) {
@@ -2992,7 +3077,7 @@ void Realm::monthly_events()
         }
       }
       if (placed) {
-        armies.push_back(army);
+        add_army(army);
         std::stringstream ss;
         ss << "A band of " << army.troops.total() << " raiders has been seen " <<
               "in the hills, heading for " << player->get_name() << "!";

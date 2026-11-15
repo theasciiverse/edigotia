@@ -64,6 +64,14 @@ Military and Realm screens), `help_realm.cpp` (their help articles),
 - `help_data.cpp`, `init.cpp`, `main.cpp`: hooks for the above.
 - Session logging: `session.log` in the save folder.
 
+Bugs in Whales' code found along the way (v20150623-av.4):
+
+- `world.cpp`: `World_map::set_size()` checked the unset old size instead
+  of the new one, and could refuse to size the map before loading it; a
+  small world was read back as a medium one.
+- `player_city.cpp`: `get_daily_birth_points()` wrote one past the end of
+  an array on the stack every day.
+
 ## Packaging (new files)
 
 - `asciiverse/build.sh`: builds only the game with upstream's Makefile,

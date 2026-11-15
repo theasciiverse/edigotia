@@ -147,7 +147,10 @@ releases.
   over race, borders and a warlike nature, and declare war when their
   opinion of each other falls low enough; wars end after half a year or so.
   Armies march on the world map (100 travel points a day, the existing
-  travel costs), besiege, and take cities.
+  travel costs), besiege, and take cities. A war your kingdom drags you
+  into does not bring the enemy to your own gates (your vassals are fair
+  game): your lord's protection is what your taxes buy. A war you start
+  yourself, or being cast out, does.
 - **Sieges and conquest** (2026-11-15): a beaten city holds for 10, 20 or 30
   days (half without food); yours for 12. A city you take becomes your
   vassal, pays a fifth of its taxes as tribute, and may rise up if it hates
@@ -171,6 +174,11 @@ releases.
   a weaker neighbor of the same kingdom. Capitals are left alone.
 - **Offers** (2026-11-15): a nearby city that likes you (opinion 40) may
   offer a trade pact at half its price.
+- **Allies at war** (2026-11-15): Whales' Pilute could "seek a military
+  alliance". An ally with a garrison of 60 or more may send half of it
+  against a city you are at war with, within 25 leagues and never of its
+  own kingdom; a city it takes becomes your vassal. Allies go home when you
+  make peace.
 - **A fallen reign stays fallen** (2026-11-15, conservative, David may
   prefer otherwise): a lost game's save files are kept, not deleted; loading
   one shows how it ended and goes no further.

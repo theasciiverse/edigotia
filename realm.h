@@ -271,6 +271,9 @@ private:
   void change_kingdom_opinion(int a, int b, int amount);
   bool plan_path(Army& army, Point dest);
   void make_vassal(City* city);
+  void add_army(Army army);
+  bool moving;
+  std::vector<Army> incoming;
   void player_message(int type, std::string text);
 
   Player_city* player;

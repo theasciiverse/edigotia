@@ -106,7 +106,8 @@ A <c=ltgreen>peace pact<c=/> promises a year without demands or war.  You \
 can break it, but the whole world will hear of it.\n\
 \n\
 An <c=ltgreen>alliance<c=/> means that city will send soldiers to help if \
-your city is besieged.  Only duchy seats, capitals and cities with a real \
+your city is besieged, and may march on your enemies and hand you the \
+cities it takes.  Only duchy seats, capitals and cities with a real \
 garrison can offer one, and only to a friend.\n\
 \n\
 A city that dislikes you will not sign at any price.\

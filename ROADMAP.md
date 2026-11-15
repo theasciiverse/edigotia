@@ -52,8 +52,12 @@ were never built.
 - [x] A first-day guide in the messages
 - [x] A first pass at balance: city guards, raiders' distance, how often
       kingdoms quarrel
-- [ ] Requests for help against their enemies, and alliances that join your
-      wars (later)
+
+## v20150623-av.4: allies
+
+- [x] Allies join your wars: a city you are allied with may march on the
+      enemies you share (never its own kingdom) and hands you what it takes
+- [x] Allied armies show on the world map in green
 
 ## Later
 

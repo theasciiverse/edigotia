@@ -1496,7 +1496,7 @@ int Player_city::get_daily_birth_points()
   int pop[CIT_MAX], rate[CIT_MAX];
   for (int i = CIT_NULL; i < CIT_MAX; i++) {
     pop[i] = population[i].count;
-    rate[CIT_MAX] = 0;
+    rate[i] = 0;  // Asciiverse: was rate[CIT_MAX], one past the end
   }
 
 // Specific rates for each type.  Lower values mean a faster rate.
