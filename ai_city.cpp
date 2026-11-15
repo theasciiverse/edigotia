@@ -1121,7 +1121,7 @@ int AI_city::get_garrison_target()
   switch (type) {
     case CITY_TYPE_CAPITAL: ret += 200; break;
     case CITY_TYPE_DUCHY:   ret +=  60; break;
-    default:                ret +=  10; break;
+    default:                ret +=  25; break;
   }
   if (GAME && GAME->realm && owner_kingdom >= 0) {
     for (int i = 0; i < GAME->kingdoms.size(); i++) {
