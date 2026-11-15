@@ -1068,11 +1068,11 @@ kingdom of the %s.", Race_data[ours->race]->plural_name.c_str());
                  realm->loan_owed);
       }
       if (realm->rank == RANK_BARON) {
-        w.putstr(1, y++, c_dkgray, c_black, "A baron the crown favors (70) \
-may be named a duke; a trusted duke (60) may be named heir.");
+        w.putstr(1, y++, c_dkgray, c_black, "With the crown's favor at 70, a \
+baron may be named a duke.");
       } else if (realm->rank == RANK_DUKE) {
         w.putstr(1, y++, c_dkgray, c_black, "When the old monarch dies, the \
-court may choose a trusted duke (crown's favor 60).");
+court may choose a duke it trusts (60).");
       }
       w.putstr(1, y++, c_dkgray, c_black, "Or take %s, the capital, by force.",
                ours->capital ? ours->capital->get_name().c_str() : "?");

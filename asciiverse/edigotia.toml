@@ -1,0 +1,38 @@
+schema_version = 1
+id = "edigotia"
+kind = "game"
+title = "Edigotia"
+description = "Grow one city in a living world of rival kingdoms: trade with your neighbors, answer to your liege, sign treaties or march armies, besiege cities and win the crown."
+year = 2014
+license = "GPL-3.0-only"
+repo = "theasciiverse/edigotia"
+provenance = "Whales, the creator of Cataclysm, built Edigotia's city in 2014 and 2015 and planned the rest; its trade, diplomacy and war are carried on here from his blog, notes and mockups."
+changes = "PATCHES.md"
+topics = ["city-builder", "strategy", "diplomacy", "economy", "fantasy", "kingdoms", "curses"]
+genre = "simulation"
+
+[developer]
+name = "Asciiverse"
+url = "https://asciiverse.sh"
+
+[upstream]
+name = "Whales"
+url = "https://github.com/Whales/edigotia"
+
+[exec]
+game = "edigotia"
+
+[min_terminal]
+cols = 80
+rows = 24
+
+[requires]
+color = "basic"
+mouse = false
+
+[media]
+cast = "asciiverse/edigotia.cast"
+thumbnail_at = 40.0
+
+[release]
+source = "github"
