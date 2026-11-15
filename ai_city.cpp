@@ -1293,3 +1293,10 @@ void AI_city::do_turn()
     }
   }
 }
+
+int AI_city::get_mineral_surplus(Mineral min)
+{
+  int ret = (mineral_production.count(min) ? mineral_production[min] : 0);
+  ret -= get_daily_demand(min);
+  return (ret > 0 ? ret : 0);
+}

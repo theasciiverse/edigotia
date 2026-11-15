@@ -13,7 +13,7 @@
 #include <fstream>
 #include <sstream>
 
-#define REALM_SAVE_VERSION 1
+#define REALM_SAVE_VERSION 2
 
 std::string treaty_name(Treaty_type type)
 {
@@ -132,6 +132,7 @@ Trade_deal::Trade_deal()
 {
   city_uid = -1;
   resource = RES_NULL;
+  mineral = MINERAL_NULL;
   amount = 0;
   price = 0;
   importing = true;
@@ -142,17 +143,21 @@ std::string Trade_deal::save_data()
 {
   std::stringstream ret;
   ret << city_uid << " " << int(resource) << " " << amount << " " << price <<
-         " " << (importing ? 1 : 0) << " " << (suspended ? 1 : 0);
+         " " << (importing ? 1 : 0) << " " << (suspended ? 1 : 0) << " " <<
+         int(mineral);
   return ret.str();
 }
 
 bool Trade_deal::load_data(std::istream& data)
 {
   int tmpres, tmpimp, tmpsus;
-  data >> city_uid >> tmpres >> amount >> price >> tmpimp >> tmpsus;
-  if (tmpres <= RES_NULL || tmpres >= RES_MAX) {
+  int tmpmin;
+  data >> city_uid >> tmpres >> amount >> price >> tmpimp >> tmpsus >> tmpmin;
+  if (tmpres < RES_NULL || tmpres >= RES_MAX || tmpmin < 0 ||
+      tmpmin >= MINERAL_MAX) {
     return false;
   }
+  mineral = Mineral(tmpmin);
   resource = Resource(tmpres);
   importing = (tmpimp != 0);
   suspended = (tmpsus != 0);
@@ -175,6 +180,7 @@ void Realm::reset()
 {
   cities.clear();
   relations.clear();
+  founded.clear();
   deals.clear();
   armies.clear();
   k_opinion.clear();
@@ -291,6 +297,17 @@ void Realm::start_new_game(Player_city* city)
     rel.opinion += rng(-5, 5);
     relations[other->uid] = rel;
   }
+// A first-day guide, from your steward.
+  City* liege = get_liege();
+  player_message(MESSAGE_MINOR, "Your steward reports: we have food for a few \
+weeks.  Build farms (A, then 3) on good soil near the keep.");
+  if (liege) {
+    player_message(MESSAGE_MINOR, "You are sworn to " + liege->get_name() +
+                   ".  Taxes are due each month; see the Realm (4, then 4).");
+  }
+  player_message(MESSAGE_MINOR, "The Minister of Trade (2, then 7) can buy \
+what we lack from our neighbors.  Diplomacy and the Military are in the \
+World menu (4); the Help menu (5) explains them all.");
   log_info("Realm begun: %d cities, %d kingdoms, liege %d", cities.size(),
            GAME->kingdoms.size(), duke_uid);
 }
@@ -315,6 +332,12 @@ bool Realm::save_to_file(std::string filename)
           (end_seen ? 1 : 0) << std::endl;
   fout << end_text << std::endl;
 
+  fout << founded.size() << std::endl;
+  for (int i = 0; i < founded.size(); i++) {
+    AI_city* city = lookup_city(founded[i]);
+    Kingdom* native = native_kingdom(city);
+    fout << founded[i] << " " << (native ? native->uid : -1) << std::endl;
+  }
   fout << cities.size() << std::endl;
   for (int i = 0; i < cities.size(); i++) {
     fout << cities[i]->uid << std::endl << cities[i]->save_state();
@@ -372,6 +395,27 @@ bool Realm::save_to_file(std::string filename)
 
 bool Realm::load_from_file(std::string filename)
 {
+  std::vector<AI_city*> pending_new;
+  if (load_body(filename, pending_new)) {
+    return true;
+  }
+// Take back any half-made founded cities before the world is linked afresh.
+  for (int i = 0; i < pending_new.size(); i++) {
+    for (int k = 0; k < GAME->kingdoms.size(); k++) {
+      std::vector<City*>& list = GAME->kingdoms[k]->cities;
+      for (int n = 0; n < list.size(); n++) {
+        if (list[n] == pending_new[i]) {
+          list.erase(list.begin() + n);
+          n--;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+bool Realm::load_body(std::string filename, std::vector<AI_city*>& pending_new)
+{
   std::ifstream fin;
   fin.open(filename.c_str());
   if (!fin.is_open()) {
@@ -409,11 +453,34 @@ bool Realm::load_from_file(std::string filename)
   std::getline(fin, end_text);
 
   int num;
+// Cities founded since the world was made: create them, to be filled in below.
+  if (version >= 2) {
+    fin >> num;
+    for (int i = 0; i < num; i++) {
+      int uid, kingdom_uid;
+      fin >> uid >> kingdom_uid;
+      Kingdom* kingdom = lookup_kingdom(kingdom_uid);
+      if (!kingdom) {
+        return false;
+      }
+      AI_city* city = new AI_city;
+      city->uid = uid;
+      kingdom->cities.push_back(city);
+      cities.push_back(city);
+      founded.push_back(uid);
+      pending_new.push_back(city);
+    }
+  }
   fin >> num;
   for (int i = 0; i < num; i++) {
     int uid;
     fin >> uid;
     AI_city* city = lookup_city(uid);
+    for (int n = 0; !city && n < pending_new.size(); n++) {
+      if (pending_new[n]->uid == uid) {
+        city = pending_new[n];
+      }
+    }
     if (!city) {
       debugmsg("The realm has a city (uid %d) this world doesn't.", uid);
       return false;
@@ -422,6 +489,9 @@ bool Realm::load_from_file(std::string filename)
       debugmsg("Couldn't read the state of %s.", city->get_name().c_str());
       return false;
     }
+  }
+  for (int i = 0; i < pending_new.size(); i++) {
+    GAME->world->set_city(pending_new[i]->location, pending_new[i]);
   }
 
   fin >> num;
@@ -438,7 +508,15 @@ bool Realm::load_from_file(std::string filename)
   fin >> num;
   for (int i = 0; i < num; i++) {
     Trade_deal deal;
-    if (!deal.load_data(fin)) {
+    if (version < 2) {
+// Before ore could be traded, a deal had no mineral.
+      int tmpres, tmpimp, tmpsus;
+      fin >> deal.city_uid >> tmpres >> deal.amount >> deal.price >> tmpimp >>
+             tmpsus;
+      deal.resource = Resource(tmpres);
+      deal.importing = (tmpimp != 0);
+      deal.suspended = (tmpsus != 0);
+    } else if (!deal.load_data(fin)) {
       return false;
     }
     deals.push_back(deal);
@@ -703,7 +781,7 @@ void Realm::add_deal(Trade_deal deal)
   if (city) {
     log_info("Deal: %s %d %s/day %s %s at %d per 100",
              deal.importing ? "buy" : "sell", deal.amount,
-             Resource_data[deal.resource]->name.c_str(),
+             deal_goods(deal).c_str(),
              deal.importing ? "from" : "to", city->get_name().c_str(),
              deal.price);
   }
@@ -751,8 +829,33 @@ void Realm::do_trade(Player_city* city)
     if (deal.suspended || blockaded || other->besieged) {
       continue;
     }
-    std::string res_name = Resource_data[deal.resource]->name;
+    std::string res_name = deal_goods(deal);
     int gold = (deal.amount * deal.price + 50) / 100;
+    if (deal.mineral != MINERAL_NULL) {
+      if (deal.importing) {
+        if (!city->expend_resource(RES_GOLD, gold)) {
+          deal.suspended = true;
+          player_message(MESSAGE_MAJOR, "You could not pay for the " +
+                         res_name + " from " + other->get_name() +
+                         "; that trade is suspended.");
+          continue;
+        }
+        city->gain_mineral(deal.mineral, deal.amount);
+        other->resources[RES_GOLD] += gold;
+      } else {
+        if (!city->expend_mineral(deal.mineral, deal.amount) ||
+            other->resources[RES_GOLD] < gold) {
+          deal.suspended = true;
+          player_message(MESSAGE_MAJOR, "Your " + res_name + " for " +
+                         other->get_name() + " could not be sent or paid " +
+                         "for; that trade is suspended.");
+          continue;
+        }
+        other->resources[RES_GOLD] -= gold;
+        city->gain_resource(RES_GOLD, gold);
+      }
+      continue;
+    }
     if (deal.importing) {
       if (!city->expend_resource(RES_GOLD, gold)) {
         deal.suspended = true;
@@ -803,6 +906,14 @@ void Realm::do_trade(Player_city* city)
   city->gain_resource(RES_GOLD, tribute_today);
 }
 
+std::string Realm::deal_goods(Trade_deal& deal)
+{
+  if (deal.mineral != MINERAL_NULL) {
+    return Mineral_data[deal.mineral]->name;
+  }
+  return Resource_data[deal.resource]->name;
+}
+
 int Realm::get_import(Resource res)
 {
   int ret = 0;
@@ -810,7 +921,8 @@ int Realm::get_import(Resource res)
     if (deals[i].suspended) {
       continue;
     }
-    if (deals[i].importing && deals[i].resource == res) {
+    if (deals[i].importing && deals[i].mineral == MINERAL_NULL &&
+        deals[i].resource == res) {
       ret += deals[i].amount;
     }
   }
@@ -827,7 +939,8 @@ int Realm::get_export(Resource res)
     if (deals[i].suspended) {
       continue;
     }
-    if (!deals[i].importing && deals[i].resource == res) {
+    if (!deals[i].importing && deals[i].mineral == MINERAL_NULL &&
+        deals[i].resource == res) {
       ret += deals[i].amount;
     }
   }
@@ -1573,6 +1686,13 @@ void Realm::army_arrives(Army& army)
     AI_city* ai_target = dynamic_cast<AI_city*>(target);
     still_enemy = (ai_target && !relation(ai_target).vassal &&
                    kingdoms_at_war(army.kingdom_uid, ai_target->owner_kingdom));
+// A feud among a kingdom's own cities (orc_feuds()).
+    Kingdom* feuding = lookup_kingdom(army.kingdom_uid);
+    if (ai_target && feuding && ai_target->owner_kingdom == army.kingdom_uid &&
+        get_fealty(feuding->race).infighting == 0 &&
+        ai_target->get_city_type() != CITY_TYPE_CAPITAL) {
+      still_enemy = true;
+    }
     if (ai_target && relation(ai_target).vassal) {
 // Your vassals are yours to defend.
       still_enemy = kingdom_at_war_with_player(army.kingdom_uid);
@@ -2172,6 +2292,193 @@ void Realm::monthly_kingdoms()
       if (rng(1, 100) <= chance) {
         start_kingdom_war(attacker, defender);
       }
+    }
+  }
+}
+
+/* A prosperous kingdom sends settlers out to found a new town, as the
+ * kingdoms did when the world was made (Kingdom::place_minor_cities()).
+ */
+void Realm::found_cities()
+{
+  for (int k = 0; k < GAME->kingdoms.size(); k++) {
+    Kingdom* kingdom = GAME->kingdoms[k];
+    if (rng(1, 100) > 8) {
+      continue;
+    }
+// Settlers come from a full city of the kingdom.
+    std::vector<AI_city*> full;
+    for (int i = 0; i < cities.size(); i++) {
+      AI_city* c = cities[i];
+      if (c->owner_kingdom == kingdom->uid && !c->besieged &&
+          c->get_total_population() * 10 >= c->get_population_cap() * 7) {
+        full.push_back(c);
+      }
+    }
+    if (full.empty()) {
+      continue;
+    }
+    AI_city* parent = full[ rng(0, full.size() - 1) ];
+    Point spot(-1, -1);
+    for (int tries = 0; tries < 40 && spot.x < 0; tries++) {
+      Point p(parent->location.x + rng(-7, 7), parent->location.y + rng(-7, 7));
+      if (GAME->world->OOB(p) || GAME->world->get_map_type(p) == MAP_OCEAN ||
+          GAME->world->is_water(p) ||
+          GAME->world->travel_cost(p, kingdom->race) <= 0) {
+        continue;
+      }
+      int claim = GAME->world->get_kingdom_id(p);
+      if (claim != -1 && claim != kingdom->uid) {
+        continue;
+      }
+      bool crowded = false;
+      for (int x = p.x - 3; x <= p.x + 3 && !crowded; x++) {
+        for (int y = p.y - 3; y <= p.y + 3 && !crowded; y++) {
+          if (GAME->world->get_city(x, y)) {
+            crowded = true;
+          }
+        }
+      }
+      if (!crowded) {
+        spot = p;
+      }
+    }
+    if (spot.x < 0) {
+      continue;
+    }
+    AI_city* city = new AI_city;
+    city->uid = GAME->get_city_uid();
+    city->set_city_type(CITY_TYPE_CITY);
+    city->set_race(kingdom->race);
+    city->set_random_name();
+    city->generate_map(spot);
+    city->randomize_properties(GAME->world);
+// A new town starts small: settlers from its parent.
+    int pop = city->get_total_population();
+    int settlers = 60 + rng(0, 60);
+    if (pop > settlers) {
+      city->lose_citizens(pop - settlers);
+      parent->lose_citizens((pop - settlers) / 10);
+    }
+    city->owner_kingdom = kingdom->uid;
+    city->replan();
+    first_day_for(city);
+    GAME->world->set_city(spot, city);
+    city->setup_trade_routes(100, false);
+    kingdom->cities.push_back(city);
+    cities.push_back(city);
+    founded.push_back(city->uid);
+// You may trade with it too, if a caravan can reach it.
+    int dist = GAME->world->get_trade_distance(player->get_race(),
+                                               player->location, spot);
+    if (dist >= 0 && dist <= 5000) {
+      player->trade_routes[city->uid] = Trade_route(spot, dist,
+                                                    (dist + 500) / 100);
+    }
+    City_relation rel;
+    rel.opinion = Race_data[kingdom->race]->relations[player->get_race()] * 8;
+    relations[city->uid] = rel;
+    if (player->world_seen.is_seen(spot)) {
+      player_message(MESSAGE_MINOR, "Settlers from " + parent->get_name() +
+                     " have founded a new town, " + city->get_name() + ".");
+    }
+    log_info("%s founded by the %s at %s", city->get_name().c_str(),
+             Race_data[kingdom->race]->plural_name.c_str(), spot.str().c_str());
+  }
+}
+
+/* Whales' notes/fealty.txt on orcs: "In-fighting is expected; any city which
+ * does NOT at least periodically attack a neighbor is perceived as weak."  A
+ * kingdom whose race shrugs at war among its own lets its cities feud.
+ */
+void Realm::orc_feuds()
+{
+  for (int k = 0; k < GAME->kingdoms.size(); k++) {
+    Kingdom* kingdom = GAME->kingdoms[k];
+    if (get_fealty(kingdom->race).infighting > 0 ||
+        Race_data[kingdom->race]->warlikeness < 2 || rng(1, 100) > 20) {
+      continue;
+    }
+    std::vector<AI_city*> own;
+    for (int i = 0; i < cities.size(); i++) {
+      if (cities[i]->owner_kingdom == kingdom->uid && !cities[i]->besieged) {
+        own.push_back(cities[i]);
+      }
+    }
+    if (own.size() < 2) {
+      continue;
+    }
+    AI_city* from = own[ rng(0, own.size() - 1) ];
+    if (from->garrison.fighters() < 60 ||
+        from->get_city_type() == CITY_TYPE_CAPITAL) {
+      continue;
+    }
+    AI_city* target = NULL;
+    int best = 9999;
+    int send = troops_strength(from->garrison, from->get_race()) / 2;
+    for (int i = 0; i < own.size(); i++) {
+      AI_city* c = own[i];
+      int dist = rl_dist(c->location, from->location);
+      if (c == from || c->get_city_type() == CITY_TYPE_CAPITAL || dist > 15) {
+        continue;
+      }
+      int theirs = troops_strength(c->garrison, c->get_race(),
+                                   defense_bonus_for(c));
+      if (send > theirs && dist < best) {
+        best = dist;
+        target = c;
+      }
+    }
+    if (target) {
+      ai_launch_army(from, target, kingdom->uid);
+      if (player->world_seen.is_seen(target->location)) {
+        player_message(MESSAGE_MINOR, from->get_name() + " has marched on " +
+                       target->get_name() + "; the " +
+                       Race_data[kingdom->race]->plural_name +
+                       " settle their quarrels among themselves.");
+      }
+    }
+  }
+}
+
+// Friendly cities come to you with offers.
+void Realm::offers()
+{
+  if (rng(1, 100) > 15) {
+    return;
+  }
+  std::vector<AI_city*> friends;
+  for (int i = 0; i < cities.size(); i++) {
+    AI_city* c = cities[i];
+    City_relation& rel = relation(c);
+    if (!rel.vassal && rel.opinion >= 40 && !at_war_with_player(c) &&
+        !rel.has_treaty(TREATY_TRADE) && trade_days(c) >= 0 &&
+        trade_days(c) <= 10) {
+      friends.push_back(c);
+    }
+  }
+  if (friends.empty()) {
+    return;
+  }
+  AI_city* city = friends[ rng(0, friends.size() - 1) ];
+  int price = treaty_price(city, TREATY_TRADE) / 2;
+  if (price < 0) {
+    return;
+  }
+  std::stringstream ss;
+  ss << "Envoys from " << city->get_name() << " (" << city_title(city) <<
+        ") offer a trade pact for a year, for only " << price << " gold.\n\n" <<
+        "Accept?";
+  if (query_yn(ss.str().c_str())) {
+    if (player->expend_resource(RES_GOLD, price)) {
+      city->resources[RES_GOLD] += price;
+      relation(city).treaty_days[TREATY_TRADE] = TREATY_LENGTH;
+      relation(city).opinion += 5;
+      player_message(MESSAGE_MINOR, "You signed a trade pact with " +
+                     city->get_name() + ".");
+    } else {
+      player_message(MESSAGE_MINOR, "You could not pay for the pact " +
+                     city->get_name() + " offered.");
     }
   }
 }
@@ -2811,6 +3118,9 @@ void Realm::do_turn()
     monthly_liege();
     launch_ai_armies();
     monthly_events();
+    found_cities();
+    orc_feuds();
+    offers();
   }
   if (game_end == GAME_END_NONE) {
     check_game_end();

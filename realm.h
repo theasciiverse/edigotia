@@ -76,6 +76,7 @@ struct Trade_deal
 
   int city_uid;
   Resource resource;
+  Mineral mineral;  // If not MINERAL_NULL, the deal is for ore instead
   int amount;       // Units per day
   int price;        // Gold per 100 units, overhead included
   bool importing;   // True if they sell to us, false if we sell to them
@@ -141,6 +142,7 @@ public:
 
   bool save_to_file(std::string filename);
   bool load_from_file(std::string filename);
+  bool load_body(std::string filename, std::vector<AI_city*>& pending_new);
 
 // One day passes outside the player's city.
   void do_turn();
@@ -148,6 +150,7 @@ public:
 // Trade, called from Player_city::do_turn()
   void do_trade(Player_city* city);
   int  get_import(Resource res);  // Expected daily, for reports
+  std::string deal_goods(Trade_deal& deal);  // "food", "iron ore"
   int  get_export(Resource res);
   int  get_trade_income();        // Gold per day from sales and tribute
   int  get_trade_expense();       // Gold per day on purchases
@@ -241,6 +244,7 @@ public:
   std::map<int, int> player_war;                // Kingdom uid -> days at war
 
   std::map<int, City_relation> relations;
+  std::vector<int> founded;   // Cities founded since the world was made
 
   int next_army_uid;
 
@@ -260,6 +264,9 @@ private:
   void check_game_end();
   void end_game(Game_end type, std::string text);
   void start_kingdom_war(int a, int b);
+  void found_cities();
+  void orc_feuds();
+  void offers();
   void end_kingdom_war(int a, int b);
   void change_kingdom_opinion(int a, int b, int amount);
   bool plan_path(Army& army, Point dest);

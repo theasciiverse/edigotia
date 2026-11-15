@@ -44,13 +44,16 @@ were never built.
 
 ## v20150623-av.3: a world that answers back
 
-- [ ] The kingdoms found new cities as they prosper
-- [ ] Trade in ores and minerals, so a city without iron can arm swordsmen
-- [ ] Other cities come to you: offers of pacts, requests for help against
-      their enemies, alliances that join your wars
-- [ ] Orcish cities fight each other, as Whales' notes say they must
-- [ ] A first-day guide in the messages, and the new screens in the help
-- [ ] Balance from playing it: prices, garrisons, war and siege lengths
+- [x] The kingdoms found new towns as they prosper, saved with your realm
+- [x] Trade in ores and minerals, so a city without iron can smelt its own
+      and arm swordsmen
+- [x] Friendly cities come to you with offers of trade pacts
+- [x] Orcish cities feud among themselves, as Whales' notes say they must
+- [x] A first-day guide in the messages
+- [x] A first pass at balance: city guards, raiders' distance, how often
+      kingdoms quarrel
+- [ ] Requests for help against their enemies, and alliances that join your
+      wars (later)
 
 ## Later
 

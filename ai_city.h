@@ -68,6 +68,7 @@ public:
   std::string save_state();   // Everything that changes as the game goes on
   bool load_state(std::istream& data);
   int  get_population_cap();
+  int  get_mineral_surplus(Mineral min);  // Ore it mines beyond its needs
   int  get_garrison_target();
   int  get_daily_income();
   int  get_garrison_wages();

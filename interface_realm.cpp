@@ -144,7 +144,7 @@ void Interface::minister_trade()
       std::stringstream ss;
       ss << (deal.importing ? "<c=ltgreen>Buy <c=/>" : "<c=yellow>Sell<c=/>") <<
             " " << fit(num(deal.amount), 5) << " " <<
-            fit(capitalize(Resource_data[deal.resource]->name), 16) << " " <<
+            fit(capitalize(realm->deal_goods(deal)), 16) << " " <<
             (deal.importing ? "from " : "to   ") <<
             fit(city ? city->get_name() : std::string("?"), 16) << " " <<
             fit(num(deal.price) + "/100", 8) << " " <<
@@ -187,63 +187,101 @@ void Interface::minister_trade()
   }
 }
 
+// A resource or an ore, for the trade screens.
+struct Trade_good
+{
+  Resource res;
+  Mineral min;
+  std::string name()
+  {
+    return (min != MINERAL_NULL ? Mineral_data[min]->name :
+                                  Resource_data[res]->name);
+  }
+};
+
+// How much a city offers (buying) or wants (selling) of a good each day.
+static int good_amount(AI_city* city, Trade_good good, bool buying)
+{
+  if (good.min != MINERAL_NULL) {
+    return (buying ? city->get_mineral_surplus(good.min) :
+                     city->get_daily_demand(good.min));
+  }
+  return (buying ? city->get_net_resource_production(good.res) :
+                   city->get_daily_demand(good.res));
+}
+
+// The price per 100 we pay (buying) or are paid (selling), overhead counted.
+static int good_price(AI_city* city, Trade_good good, bool buying)
+{
+  int base = (good.min != MINERAL_NULL ? city->get_price(good.min) :
+                                         city->get_price(good.res));
+  int overhead = GAME->realm->route_overhead(city);
+  int price = (buying ? base + overhead : base - overhead);
+  return (price < 1 ? 1 : price);
+}
+
+static int player_has(Player_city* city, Trade_good good)
+{
+  return (good.min != MINERAL_NULL ? city->get_mineral_amount(good.min) :
+                                     city->get_resource_amount(good.res));
+}
+
 void Interface::trade_new(bool buying)
 {
   Realm* realm = GAME->realm;
-// First, which resource.
-  std::vector<Resource> resources;
-  std::vector<std::string> rows;
+// Every good: resources first, then ores.
+  std::vector<Trade_good> all;
   for (int i = 1; i < RES_MAX; i++) {
     Resource res = Resource(i);
-    if (Resource_data[res]->meta || res == RES_GOLD) {
+    if (!Resource_data[res]->meta && res != RES_GOLD) {
+      Trade_good good = { res, MINERAL_NULL };
+      all.push_back(good);
+    }
+  }
+  for (int i = 1; i < MINERAL_MAX; i++) {
+    Trade_good good = { RES_NULL, Mineral(i) };
+    all.push_back(good);
+  }
+// The cities we may trade with.
+  std::vector<AI_city*> open;
+  for (std::map<int,Trade_route>::iterator it = pl_city->trade_routes.begin();
+       it != pl_city->trade_routes.end(); it++) {
+    AI_city* city = realm->lookup_city(it->first);
+    if (city && !realm->at_war_with_player(city) &&
+        !realm->relation(city).vassal) {
+      open.push_back(city);
+    }
+  }
+
+  std::vector<Trade_good> goods;
+  std::vector<std::string> rows;
+  for (int g = 0; g < all.size(); g++) {
+    Trade_good good = all[g];
+    if (!buying && player_has(pl_city, good) <= 0) {
       continue;
     }
     int partners = 0, best = -1;
-    for (std::map<int,Trade_route>::iterator it = pl_city->trade_routes.begin();
-         it != pl_city->trade_routes.end(); it++) {
-      AI_city* city = realm->lookup_city(it->first);
-      if (!city || realm->at_war_with_player(city) ||
-          realm->relation(city).vassal) {
+    for (int i = 0; i < open.size(); i++) {
+      if (good_amount(open[i], good, buying) <= 0) {
         continue;
       }
-      int overhead = realm->route_overhead(city);
-      int price;
-      if (buying) {
-        if (city->get_net_resource_production(res) <= 0) {
-          continue;
-        }
-        price = city->get_price(res) + overhead;
-        if (best == -1 || price < best) {
-          best = price;
-        }
-      } else {
-        if (city->get_daily_demand(res) <= 0) {
-          continue;
-        }
-        price = city->get_price(res) - overhead;
-        if (price < 1) {
-          price = 1;
-        }
-        if (price > best) {
-          best = price;
-        }
+      int price = good_price(open[i], good, buying);
+      if (best == -1 || (buying ? price < best : price > best)) {
+        best = price;
       }
       partners++;
     }
     if (partners == 0) {
       continue;
     }
-    if (!buying && pl_city->get_resource_amount(res) <= 0) {
-      continue;
-    }
     std::stringstream ss;
-    ss << fit(capitalize(Resource_data[res]->name), 20) << " " <<
-          fit(num(partners), 8) << " " << fit(num(best) + "/100", 10);
+    ss << fit(capitalize(good.name()), 20) << " " << fit(num(partners), 8) <<
+          " " << fit(num(best) + "/100", 10);
     if (!buying) {
-      ss << " you have " << pl_city->get_resource_amount(res);
+      ss << " you have " << player_has(pl_city, good);
     }
     rows.push_back(ss.str());
-    resources.push_back(res);
+    goods.push_back(good);
   }
   long key;
   int index = list_picker(buying ? "Buy: what do you need?" :
@@ -255,44 +293,28 @@ void Interface::trade_new(bool buying)
   if (index < 0) {
     return;
   }
-  Resource res = resources[index];
+  Trade_good good = goods[index];
 
 // Then, with whom.
   std::vector<AI_city*> partners;
   std::vector<int> prices, amounts;
-  rows.clear();
-  for (std::map<int,Trade_route>::iterator it = pl_city->trade_routes.begin();
-       it != pl_city->trade_routes.end(); it++) {
-    AI_city* city = realm->lookup_city(it->first);
-    if (!city || realm->at_war_with_player(city) ||
-        realm->relation(city).vassal) {
-      continue;
-    }
-    int overhead = realm->route_overhead(city);
-    int amount, price;
-    if (buying) {
-      amount = city->get_net_resource_production(res);
-      price = city->get_price(res) + overhead;
-    } else {
-      amount = city->get_daily_demand(res);
-      price = city->get_price(res) - overhead;
-      if (price < 1) {
-        price = 1;
-      }
-    }
+  for (int i = 0; i < open.size(); i++) {
+    AI_city* city = open[i];
+    int amount = good_amount(city, good, buying);
 // Less what we already trade with them.
-    for (int i = 0; i < realm->deals.size(); i++) {
-      if (realm->deals[i].city_uid == city->uid &&
-          realm->deals[i].resource == res &&
-          realm->deals[i].importing == buying) {
-        amount -= realm->deals[i].amount;
+    for (int n = 0; n < realm->deals.size(); n++) {
+      Trade_deal& deal = realm->deals[n];
+      if (deal.city_uid == city->uid && deal.importing == buying &&
+          deal.mineral == good.min &&
+          (good.min != MINERAL_NULL || deal.resource == good.res)) {
+        amount -= deal.amount;
       }
     }
     if (amount <= 0) {
       continue;
     }
     partners.push_back(city);
-    prices.push_back(price);
+    prices.push_back(good_price(city, good, buying));
     amounts.push_back(amount);
   }
 // Cheapest (or best paying) first.
@@ -306,13 +328,15 @@ void Interface::trade_new(bool buying)
       }
     }
   }
+  rows.clear();
   for (int i = 0; i < partners.size(); i++) {
     AI_city* city = partners[i];
     City_relation& rel = realm->relation(city);
+    int days = realm->trade_days(city);
     std::stringstream ss;
     ss << fit(city->get_name(), 18) << " " <<
           fit(capitalize(Race_data[city->get_race()]->name), 9) << " " <<
-          fit(num(realm->trade_days(city)) + " days", 8) << " " <<
+          fit(num(days) + (days == 1 ? " day" : " days"), 8) << " " <<
           fit(num(amounts[i]) + "/day", 9) << " " <<
           fit(num(prices[i]) + "/100", 9) << " <c=" <<
           color_tag(realm->relationship_color(rel.opinion)) << ">" <<
@@ -322,7 +346,7 @@ void Interface::trade_new(bool buying)
     }
     rows.push_back(ss.str());
   }
-  std::string what = Resource_data[res]->name;
+  std::string what = good.name();
   index = list_picker((buying ? "Buy " : "Sell ") + what + (buying ?
                       ": who will sell it?" : ": who will buy it?"),
                       buying ?
@@ -334,8 +358,8 @@ void Interface::trade_new(bool buying)
   }
   AI_city* city = partners[index];
   int most = amounts[index];
-  if (!buying && pl_city->get_resource_amount(res) < most) {
-    most = pl_city->get_resource_amount(res);
+  if (!buying && player_has(pl_city, good) < most) {
+    most = player_has(pl_city, good);
   }
   int amount = int_input_popup("%s %s a day (up to %d, at %d gold per 100):",
                                buying ? "Buy how much" : "Sell how much",
@@ -354,7 +378,8 @@ void Interface::trade_new(bool buying)
   }
   Trade_deal deal;
   deal.city_uid = city->uid;
-  deal.resource = res;
+  deal.resource = good.res;
+  deal.mineral = good.min;
   deal.amount = amount;
   deal.price = prices[index];
   deal.importing = buying;

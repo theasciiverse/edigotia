@@ -117,7 +117,7 @@ releases.
 - **Trade deals** (2026-11-15): a deal is a standing order, so many units a
   day at the seller's price plus the route's overhead, until cancelled.
   Sellers offer what they produce beyond their needs; buyers want what they
-  lack. Ores are not yet traded.
+  lack.
 - **Diplomacy** (2026-11-15): three treaties, each a year long and bought
   with gold (a trade pact halves overhead; a peace pact rules out demands
   and war; an alliance brings help when you are besieged). Gifts, demands
@@ -160,6 +160,17 @@ releases.
   monarch dies, a duke with favor 60 is chosen), or, for a race with no
   kingdom in the world, by ruling four cities besides your own. You may rule
   on after winning. Losing: the keep falls, or the city empties.
+- **New towns** (2026-11-15): now and then a kingdom with a city near its
+  full size sends 60 to 120 settlers to found a town within seven leagues,
+  on its own or unclaimed land. They are saved with the realm.
+- **Ore for sale** (2026-11-15): cities sell the ore they mine beyond their
+  workshops' needs, and buy what their workshops lack, so a city with no
+  hills can still smelt iron for swordsmen.
+- **Feuding orcs** (2026-11-15): in a kingdom whose race expects war among
+  its own (`notes/fealty.txt`: orcs), a strong city now and then marches on
+  a weaker neighbor of the same kingdom. Capitals are left alone.
+- **Offers** (2026-11-15): a nearby city that likes you (opinion 40) may
+  offer a trade pact at half its price.
 - **A fallen reign stays fallen** (2026-11-15, conservative, David may
   prefer otherwise): a lost game's save files are kept, not deleted; loading
   one shows how it ended and goes no further.
