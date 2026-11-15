@@ -1,4 +1,5 @@
 #include "player_city.h"
+#include "realm.h"
 #include "cuss.h"
 #include "window.h"
 #include "building.h"
@@ -608,9 +609,9 @@ void Player_city::do_turn()
   birth_citizens(births); // Handles the message, too
 
 // Import resources.
-  for (int i = 1; i < RES_MAX; i++) {
-    Resource import = Resource(i);
-    resources[import] += get_import(import);
+// Asciiverse: trade deals and tribute are kept by the Realm.
+  if (GAME->realm) {
+    GAME->realm->do_trade(this);
   }
 
 // Receive taxes.
@@ -737,16 +738,23 @@ void Player_city::do_turn()
     population[i].consume_luxuries(this);
   }
 
-// The last resource transaction we should do is exporting resources, since it's
-// presumably the one with the least consequences.
-  for (int i = 1; i < RES_MAX; i++) {
-    Resource res_export = Resource(i);
-    int export_amt = get_export(res_export);
-    if (resources[res_export] >= export_amt) {
-      resources[res_export] -= export_amt;
-    } else {
-// TODO: consequences for failure to export
+// Asciiverse: exports are sent with the rest of the trade, in Realm::do_trade().
+// Soldiers' pay, which was counted but never paid.
+  int military = get_military_expense();
+  if (!expend_resource(RES_GOLD, military)) {
+    resources[RES_GOLD] = 0;
+// Unpaid soldiers go home to their families.
+    Troops troops = get_troops();
+    int leaving = troops.fighters() / 20 + 1;
+    for (int i = UNIT_MILITIA; i < UNIT_COMMANDERS && leaving > 0; i++) {
+      int gone = (leaving < troops.count[i] ? leaving : troops.count[i]);
+      if (gone > 0) {
+        disband(Unit_type(i), gone);
+        leaving -= gone;
+      }
     }
+    add_message(MESSAGE_MAJOR, "The treasury is empty and the soldiers \
+went unpaid; some have gone home.");
   }
 
 // Make sure our food isn't above the cap (food goes bad y'know)
@@ -1843,14 +1851,120 @@ int Player_city::get_total_wages(Citizen_type type)
   return ret / 10;
 }
 
-// TODO: This function, for real
+// Asciiverse: wages by unit type (Unit_data, army.cpp), for soldiers at home
+// and in the field.
 int Player_city::get_military_expense()
 {
+  Troops troops = get_troops();
+  if (GAME->realm) {
+    for (int i = 0; i < GAME->realm->armies.size(); i++) {
+      if (GAME->realm->armies[i].player_owned) {
+        troops.add(GAME->realm->armies[i].troops);
+      }
+    }
+  }
   int ret = 0;
+  for (int i = 1; i < UNIT_MAX; i++) {
+    ret += troops.count[i] * Unit_data[i].wages;
+  }
+  return ret / 10;
+}
+
+Troops Player_city::get_troops()
+{
+  Troops ret;
   for (int i = 0; i < units_stationed.size(); i++) {
-    ret += units_stationed[i].count / 5;
+    ret.count[ units_stationed[i].type ] += units_stationed[i].count;
   }
   return ret;
+}
+
+void Player_city::set_troops(Troops troops)
+{
+  units_stationed.clear();
+  for (int i = 1; i < UNIT_MAX; i++) {
+    if (troops.count[i] > 0) {
+      Military_unit unit;
+      unit.type = Unit_type(i);
+      unit.count = troops.count[i];
+      units_stationed.push_back(unit);
+    }
+  }
+}
+
+int Player_city::max_recruits(Unit_type type)
+{
+  if (type <= UNIT_NULL || type >= UNIT_MAX) {
+    return 0;
+  }
+  Unit_type_datum* dat = &(Unit_data[type]);
+  int ret = get_unemployed_citizens(dat->citizen);
+// Room in the barracks, counting soldiers away in the field.
+  int room = get_military_supported() - get_military_count();
+  if (GAME->realm) {
+    for (int i = 0; i < GAME->realm->armies.size(); i++) {
+      if (GAME->realm->armies[i].player_owned) {
+        room -= GAME->realm->armies[i].troops.total();
+      }
+    }
+  }
+  if (room < ret) {
+    ret = room;
+  }
+  if (dat->gear != RES_NULL && dat->gear_amount > 0) {
+    int geared = get_resource_amount(dat->gear) / dat->gear_amount;
+    if (geared < ret) {
+      ret = geared;
+    }
+  }
+  if (dat->recruit_cost > 0) {
+    int paid = get_resource_amount(RES_GOLD) / dat->recruit_cost;
+    if (paid < ret) {
+      ret = paid;
+    }
+  }
+  return (ret > 0 ? ret : 0);
+}
+
+std::string Player_city::recruit(Unit_type type, int amount)
+{
+  if (type <= UNIT_NULL || type >= UNIT_MAX || amount <= 0) {
+    return "Nobody to recruit.";
+  }
+  Unit_type_datum* dat = &(Unit_data[type]);
+  if (amount > max_recruits(type)) {
+    return "You can't raise that many.";
+  }
+  population[dat->citizen].remove_citizens(amount);
+  if (dat->gear != RES_NULL) {
+    expend_resource(dat->gear, dat->gear_amount * amount);
+  }
+  expend_resource(RES_GOLD, dat->recruit_cost * amount);
+  Troops troops = get_troops();
+  troops.count[type] += amount;
+  set_troops(troops);
+  return "";
+}
+
+void Player_city::disband(Unit_type type, int amount)
+{
+  Troops troops = get_troops();
+  if (amount > troops.count[type]) {
+    amount = troops.count[type];
+  }
+  if (amount <= 0) {
+    return;
+  }
+  troops.count[type] -= amount;
+  set_troops(troops);
+  population[ Unit_data[type].citizen ].add_citizens(amount);
+}
+
+void Player_city::soldiers_home(Troops returning)
+{
+  Troops troops = get_troops();
+  troops.add(returning);
+  set_troops(troops);
 }
 
 void Player_city::set_tax_rate(Citizen_type type, int rate)
@@ -2300,16 +2414,15 @@ int Player_city::get_livestock_capacity()
   return ret;
 }
 
-// TODO: This function.
+// Asciiverse: what the Realm's trade deals and tribute bring in each day.
 int Player_city::get_import(Resource res)
 {
-  return 0;
+  return (GAME->realm ? GAME->realm->get_import(res) : 0);
 }
 
-// TODO: This function.
 int Player_city::get_export(Resource res)
 {
-  return 0;
+  return (GAME->realm ? GAME->realm->get_export(res) : 0);
 }
 
 bool Player_city::meets_achievement(City_achievement achievement)

@@ -195,6 +195,7 @@ density quarters are ideal for the <link=burghers>upper class</link>.\
     _housing(CIT_BURGHER,   5);
     _housing(CIT_MERCHANT, 50);
     _housing(CIT_PEASANT, 100);
+    _military(20);  // Asciiverse: room for a city guard
     _description("\
 A keep is the center of any city.  It provides a home for the \
 <link=nobles>nobility</link> as well as space for some <link=citizens>citizens\

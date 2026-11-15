@@ -7,6 +7,8 @@
 #include "ai.h"
 #include "help.h"
 #include "globals.h"
+#include "army.h"
+#include "log.h"
 
 bool init_all_data()
 {
@@ -18,6 +20,7 @@ bool init_all_data()
   init_animal_data();
   init_races();
   init_city_roles();
+  init_unit_data();  // Asciiverse: soldiers
 
   HELP = new Help_database;
   init_help();

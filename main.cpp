@@ -8,6 +8,7 @@
 #include "files.h"  // For file_exists()
 #include "kingdom.h"  // For init_kingdoms()
 #include "globals.h"
+#include "log.h"
 
 void check_world_resources(World_map* world);
 
@@ -24,6 +25,9 @@ int main()
     debugmsg("Failed to set directories!");
     return 1;
   }
+
+// Asciiverse: the session log, in the save folder.
+  log_start();
 
 // Init the game data!
   if (!init_all_data()) {

@@ -2,6 +2,11 @@
 #include "window.h" // For debugmsg()
 #include "world.h"  // Needed for randomize_properties()
 #include "rng.h"
+#include "globals.h"
+#include "game.h"
+#include "log.h"
+#include "kingdom.h"
+#include "realm.h"
 #include <sstream>
 
 AI_mayor::AI_mayor()
@@ -25,6 +30,12 @@ AI_city::AI_city()
   race = RACE_NULL;
   role = CITY_ROLE_NULL;
   radius = 1;
+  owner_kingdom = -1;
+  besieged = false;
+  hungry = false;
+  birth_points = 0;
+  days_since_plan = 0;
+  plan_population = 0;
   for (int i = 0; i < CIT_MAX; i++) {
     population[i].type = Citizen_type(i);
     free_citizens[i] = 0;
@@ -1008,4 +1019,277 @@ void AI_city::set_price(Resource res)
   int reduction = (res_dat->value * avg_overhead) / aggressiveness;
   resource_price[res] -= reduction;
 //debugmsg("%s Price: value %d; avg_overhead %d; Agro %d [%d]; reduction %d; final %d", res_dat->name.c_str(), res_dat->value, avg_overhead, aggressiveness, mayor.price_aggressiveness, reduction, resource_price[res]);
+}
+
+// Asciiverse: the other cities' turns.
+
+void AI_city::set_radius()
+{
+  int pop = get_total_population();
+  if (pop >= 10000) {
+    radius = 3;
+  } else if (pop >= 1000) {
+    radius = 2;
+  } else {
+    radius = 1;
+  }
+  int burghers = population[CIT_BURGHER].count;
+  if (burghers >= 10) {
+    radius += 2;
+  } else if (burghers > 0) {
+    radius += 1;
+  }
+  if (radius > CITY_MAP_SIZE / 2) {
+    radius = CITY_MAP_SIZE / 2;
+  }
+}
+
+void AI_city::replan()
+{
+  if (!GAME || !GAME->world) {
+    return;
+  }
+  set_radius();
+  for (int i = 0; i < CIT_MAX; i++) {
+    free_citizens[i] = population[i].count;
+  }
+  areas_built.clear();
+  buildings_built.clear();
+  areas_built[AREA_KEEP] = 1;
+  setup_resource_production(GAME->world);
+  refresh_trade();
+  plan_population = get_total_population();
+  days_since_plan = 0;
+}
+
+void AI_city::refresh_trade()
+{
+  resource_demand.clear();
+  mineral_demand.clear();
+  init_demands();
+  set_all_prices();
+}
+
+std::string AI_city::save_state()
+{
+  std::stringstream ret;
+  ret << save_data() << std::endl;
+  ret << garrison.save_data() << " " << owner_kingdom << " " <<
+         (besieged ? 1 : 0) << " " << birth_points << " " << days_since_plan <<
+         " " << plan_population << std::endl;
+  return ret.str();
+}
+
+bool AI_city::load_state(std::istream& data)
+{
+  if (!load_data(data)) {
+    return false;
+  }
+  int tmpbesieged;
+  if (!garrison.load_data(data)) {
+    return false;
+  }
+  data >> owner_kingdom >> tmpbesieged >> birth_points >> days_since_plan >>
+          plan_population;
+  besieged = (tmpbesieged != 0);
+  return !data.fail();
+}
+
+int AI_city::get_population_cap()
+{
+  Race_datum* race_dat = Race_data[race];
+  int cap = race_dat->city_size_max[type];
+// A few city sizes in the race data are smaller than their minimum.
+  if (cap < race_dat->city_size_min[type]) {
+    cap = race_dat->city_size_min[type];
+  }
+  return (cap * 3) / 2;
+}
+
+/* A city keeps a garrison in proportion to its people and how warlike its race
+ * is (Race_datum::warlikeness, -3 to 3), plus a household guard for duchy
+ * seats and capitals.  In wartime it wants half again as many.
+ */
+int AI_city::get_garrison_target()
+{
+  int warlike = Race_data[race]->warlikeness;
+  int percent = 4 + warlike;
+  if (percent < 1) {
+    percent = 1;
+  }
+  int ret = (get_total_population() * percent) / 100;
+  switch (type) {
+    case CITY_TYPE_CAPITAL: ret += 200; break;
+    case CITY_TYPE_DUCHY:   ret +=  60; break;
+    default:                ret +=  10; break;
+  }
+  if (GAME && GAME->realm && owner_kingdom >= 0) {
+    for (int i = 0; i < GAME->kingdoms.size(); i++) {
+      if (GAME->realm->kingdoms_at_war(owner_kingdom, GAME->kingdoms[i]->uid)) {
+        ret = (ret * 3) / 2;
+        break;
+      }
+    }
+  }
+  return ret;
+}
+
+// Taxes, roughly a fifth of what each class earns (see the help articles on
+// peasants, merchants and burghers for their daily income).
+int AI_city::get_daily_income()
+{
+  int income = population[CIT_PEASANT ].count * 3 +
+               population[CIT_MERCHANT].count * 8 +
+               population[CIT_BURGHER ].count * 250;
+  return income / 50;
+}
+
+int AI_city::get_garrison_wages()
+{
+  int ret = 0;
+  for (int i = 1; i < UNIT_MAX; i++) {
+    ret += garrison.count[i] * Unit_data[i].wages;
+  }
+  return ret / 10;
+}
+
+void AI_city::recruit(int number)
+{
+  int archer_chance = 20, sword_chance = 30;
+  switch (race) {
+    case RACE_ELF:      archer_chance = 45; sword_chance = 20; break;
+    case RACE_HALFLING: archer_chance = 35; sword_chance = 15; break;
+    case RACE_GOBLIN:   archer_chance = 30; sword_chance = 20; break;
+    case RACE_GNOME:    archer_chance = 35; sword_chance = 20; break;
+    case RACE_DWARF:    archer_chance = 10; sword_chance = 55; break;
+    case RACE_ORC:      archer_chance = 10; sword_chance = 45; break;
+    case RACE_MINOTAUR: archer_chance =  5; sword_chance = 50; break;
+    case RACE_TROLL:    archer_chance =  0; sword_chance = 30; break;
+    case RACE_OGRE:     archer_chance =  5; sword_chance = 35; break;
+    default: break;
+  }
+  for (int i = 0; i < number; i++) {
+    int roll = rng(1, 100);
+    if (roll <= archer_chance) {
+      garrison.count[UNIT_ARCHERS]++;
+    } else if (roll <= archer_chance + sword_chance) {
+      garrison.count[UNIT_SWORDSMEN]++;
+    } else {
+      garrison.count[UNIT_SPEARMEN]++;
+    }
+  }
+// One commander for every 60 soldiers or so.
+  int want_commanders = garrison.fighters() / 60;
+  if (garrison.count[UNIT_COMMANDERS] < want_commanders) {
+    garrison.count[UNIT_COMMANDERS] = want_commanders;
+  }
+}
+
+void AI_city::lose_citizens(int number)
+{
+  for (int i = CIT_PEASANT; i <= CIT_BURGHER && number > 0; i++) {
+    int lost = number;
+    if (lost > population[i].count) {
+      lost = population[i].count;
+    }
+    population[i].remove_citizens(lost);
+    number -= lost;
+  }
+}
+
+void AI_city::do_turn()
+{
+  Race_datum* race_dat = Race_data[race];
+  hungry = false;
+
+// Food.  A besieged city cannot work the fields outside its walls.
+  int consumption = get_food_consumption();
+  int production = get_gross_resource_production(RES_FOOD);
+  if (besieged) {
+    production /= 3;
+  }
+  resources[RES_FOOD] += production - consumption;
+// Short of food, a city that isn't besieged buys what it needs, if it can.
+  if (resources[RES_FOOD] < 0 && !besieged) {
+    int needed = 0 - resources[RES_FOOD];
+    int cost = (needed * Resource_data[RES_FOOD]->value) / 100 + 1;
+    if (resources[RES_GOLD] >= cost) {
+      resources[RES_GOLD] -= cost;
+      resources[RES_FOOD] = 0;
+    }
+  }
+  if (resources[RES_FOOD] < 0) {
+// Hungry people leave for kinder places.
+    resources[RES_FOOD] = 0;
+    hungry = true;
+    lose_citizens(get_total_population() / 100 + 1);
+  }
+  int food_cap = consumption * 30;
+  if (resources[RES_FOOD] > food_cap) {
+    resources[RES_FOOD] = food_cap;
+  }
+
+// Births, as for the player's city, though a little slower.
+  int pop = get_total_population();
+  if (!hungry && !besieged && pop < get_population_cap()) {
+    for (int i = CIT_PEASANT; i <= CIT_BURGHER; i++) {
+      int rate = race_dat->birth_rate[i];
+      if (rate > 0) {
+        birth_points += (population[i].count * 50) / rate;
+      }
+    }
+    while (birth_points >= 100) {
+      birth_points -= 100;
+// Keep the classes in our race's proportions.
+      int ratio_a = race_dat->citizen_ratio[CIT_MERCHANT],
+          ratio_b = race_dat->citizen_ratio[CIT_BURGHER];
+      if (ratio_b > 0 && population[CIT_MERCHANT].count >=
+                         (population[CIT_BURGHER].count + 1) * ratio_b) {
+        population[CIT_BURGHER].add_citizens(1);
+      } else if (ratio_a > 0 && population[CIT_PEASANT].count >=
+                               (population[CIT_MERCHANT].count + 1) * ratio_a) {
+        population[CIT_MERCHANT].add_citizens(1);
+      } else {
+        population[CIT_PEASANT].add_citizens(1);
+      }
+    }
+  }
+
+// Taxes in, wages out.
+  resources[RES_GOLD] += get_daily_income() - get_garrison_wages();
+  if (resources[RES_GOLD] < 0) {
+// Unpaid soldiers drift away.
+    resources[RES_GOLD] = 0;
+    int deserters = garrison.fighters() / 50 + 1;
+    for (int i = 1; i < UNIT_COMMANDERS && deserters > 0; i++) {
+      int gone = (deserters < garrison.count[i] ? deserters : garrison.count[i]);
+      garrison.count[i] -= gone;
+      deserters -= gone;
+    }
+  }
+
+// Recruit toward the garrison we want.
+  int gap = get_garrison_target() - garrison.fighters();
+  if (gap > 0 && !besieged) {
+    int number = gap / 30 + 1;
+    int cost = number * 6;
+    if (resources[RES_GOLD] >= cost * 3) {
+      resources[RES_GOLD] -= cost;
+      recruit(number);
+    }
+  }
+
+// Every season or so, lay out the city again if it has changed much.
+  days_since_plan++;
+  if (days_since_plan >= 90) {
+    int now = get_total_population();
+    int base = (plan_population > 0 ? plan_population : 1);
+    int change = (100 * (now > base ? now - base : base - now)) / base;
+    if (change >= 15) {
+      log_debug("%s replans: population %d -> %d", name.c_str(), base, now);
+      replan();
+    } else {
+      days_since_plan = rng(0, 30);
+    }
+  }
 }

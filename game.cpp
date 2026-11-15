@@ -7,6 +7,9 @@
 #include "rng.h"
 #include "globals.h"
 #include "files.h"
+#include "realm.h"
+#include "ai_city.h"
+#include "log.h"
 #include <fstream>
 
 Game::Game()
@@ -14,6 +17,7 @@ Game::Game()
   next_city_uid = 0;
   world = new World_map;
   city = new Player_city;
+  realm = new Realm;
   world_ready = false;
 }
 
@@ -95,6 +99,13 @@ bool Game::start_new_game()
   city->start_new_city();
   city->setup_trade_routes();
   city->set_starting_tiles_seen();
+// Asciiverse: a uid of our own, and a living world around us.
+  city->uid = get_city_uid();
+  realm->reset();
+  realm->link_cities();
+  realm->start_new_game(city);
+  log_info("New city %s founded at %s", city->get_name().c_str(),
+           city->location.str().c_str());
 
   return true;
 }
@@ -152,8 +163,15 @@ bool Game::save_game()
 
   fout.close();
 
-  save_kingdoms();
-  world->save_to_file(SAVE_DIR + "world.txt");
+/* Asciiverse: the world file stays as it was generated.  Everything that has
+ * changed in it since (the other cities, the kingdoms, armies, treaties, the
+ * date) is this city's own, and goes in its Realm.
+ */
+  if (!realm->save_to_file(realm_filename())) {
+    debugmsg("Couldn't save %s.", realm_filename().c_str());
+    return false;
+  }
+  log_info("Saved %s", filename.c_str());
 
   return true;
 }
@@ -179,14 +197,61 @@ bool Game::load_game(std::string filename)
 
 void Game::advance_time(int days, City* city)
 {
-// days defaults to 1.
-  date.advance(days);
-// city defaults to NULL
-  if (city) {
-    for (int i = 0; i < days; i++) {
+// days defaults to 1; city defaults to NULL.
+// Asciiverse: a day at a time, with the rest of the world taking its turn too.
+  for (int i = 0; i < days; i++) {
+    int urgent_before = 0;
+    if (this->city) {
+      urgent_before = this->city->get_unread_message_count()[MESSAGE_URGENT];
+    }
+    Game_end end_before = (realm ? realm->game_end : GAME_END_NONE);
+    date.advance(1);
+    if (city) {
       city->do_turn();
     }
+    if (realm) {
+      realm->do_turn();
+      if (realm->game_end != end_before) {
+        break;
+      }
+    }
+// Something urgent stops a week's wait, so the player can answer it.
+    if (this->city && i + 1 < days &&
+        this->city->get_unread_message_count()[MESSAGE_URGENT] > urgent_before) {
+      break;
+    }
   }
+}
+
+std::string Game::realm_filename()
+{
+  return SAVE_DIR + "cities/" + city->get_name() + ".realm";
+}
+
+void Game::finish_loading()
+{
+// Old saves gave the player's city no uid.
+  if (city->uid < 0) {
+    city->uid = get_city_uid();
+  }
+  if (!world->get_city(city->location)) {
+    world->set_city(city->location, city);
+  }
+  realm->reset();
+  realm->link_cities();
+  if (file_exists(realm_filename())) {
+    if (!realm->load_from_file(realm_filename())) {
+      debugmsg("%s could not be read; the world around your city starts \
+afresh.", realm_filename().c_str());
+      realm->reset();
+      realm->link_cities();
+      realm->start_new_game(city);
+    }
+  } else {
+// A city saved before the Realm existed: its world starts from today.
+    realm->start_new_game(city);
+  }
+  log_info("Loaded %s", city->get_name().c_str());
 }
 
 Date Game::get_date()

@@ -8,6 +8,9 @@
 #include "stringfunc.h" // For capitalize()
 #include "animal.h"
 #include "ai_city.h"
+#include "realm.h"
+#include "game.h"
+#include "globals.h"
 #include "pathfind.h" // For road building, trade route finding, and more!
 #include "globals.h"
 #include <sstream>
@@ -1297,6 +1300,20 @@ Point World_map::draw(Point start, Map_seen* seen)
 
     Point center(pos.x + xdim / 2, pos.y + ydim / 2);
 
+// Asciiverse: armies on the march, drawn as & where they are seen.
+    std::map<int,Army*> army_at;
+    if (GAME->realm) {
+      for (int i = 0; i < GAME->realm->armies.size(); i++) {
+        Army* army = &(GAME->realm->armies[i]);
+        if (!OOB(army->pos)) {
+          int key = army->pos.y * size + army->pos.x;
+          if (!army_at.count(key) || army->player_owned) {
+            army_at[key] = army;
+          }
+        }
+      }
+    }
+
     for (int x = pos.x; x < pos.x + xdim; x++) {
       for (int y = pos.y; y < pos.y + ydim; y++) {
 
@@ -1314,6 +1331,8 @@ Point World_map::draw(Point start, Map_seen* seen)
 
           if (!tile_seen) {
             gl = glyph('-', c_dkgray, c_black);
+          } else if (army_at.count(y * size + x)) {
+            gl = army_at[y * size + x]->get_glyph();
           } else if (city_here) {
             gl = city_here->get_glyph();
           } else if (has_road(x, y)) {
@@ -1438,7 +1457,16 @@ Point World_map::draw(Point start, Map_seen* seen)
 
 // City info
       City* city_here = get_city(center);
-      if (city_here) {
+      int army_key = center.y * size + center.x;
+      if (army_at.count(army_key)) {
+        Army* army = army_at[army_key];
+        std::stringstream ss_army;
+        ss_army << (army->player_owned ? "Your army" : "Army") << " (" <<
+                   army->troops.total() << ")";
+        i_legend.set_data("text_city_name", ss_army.str());
+        i_legend.set_data("text_city_name",
+                          army->player_owned ? c_white : c_ltred);
+      } else if (city_here) {
         i_legend.set_data("text_city_name", city_here->get_name());
         i_legend.set_data("text_city_name", c_yellow);
       } else {
@@ -1451,7 +1479,7 @@ Point World_map::draw(Point start, Map_seen* seen)
       i_legend.clear_data("text_minerals_here_right");
       i_legend.clear_data("num_kingdom_id");
       i_legend.clear_data("text_kingdom_race");
-      i_legend.clear_data("text_city-name");
+      i_legend.clear_data("text_city_name");
     }
 
     i_legend.draw(&w_legend);
@@ -1759,12 +1787,56 @@ City* World_map::get_city(int x, int y)
 
 City* World_map::lookup_city_uid(int uid)
 {
-  for (int i = 0; i < city_list.size(); i++) {
-    if (city_list[i] && city_list[i]->uid == uid) {
-      return city_list[i];
+// Asciiverse: the Realm looks cities up thousands of times a day, so keep a
+// map of them, rebuilt whenever the list or a uid has changed.
+  if (uid_lookup.count(uid)) {
+    City* found = uid_lookup[uid];
+    if (found && found->uid == uid) {
+      return found;
     }
   }
+  uid_lookup.clear();
+  for (int i = 0; i < city_list.size(); i++) {
+    if (city_list[i]) {
+      uid_lookup[ city_list[i]->uid ] = city_list[i];
+    }
+  }
+  if (uid_lookup.count(uid)) {
+    return uid_lookup[uid];
+  }
   return NULL;
+}
+
+std::vector<Point> World_map::travel_route(Race traveler, Point start,
+                                           Point end)
+{
+  std::vector<Point> ret;
+  if (traveler == RACE_NULL || start == end || travel_map.count(traveler) == 0) {
+    return ret;
+  }
+  Pathfinder pf(travel_map[traveler]);
+  Path route = pf.get_path(PATH_A_STAR, start, end);
+  ret = route.get_points();
+// The route begins where we stand; drop that step.
+  if (!ret.empty() && ret[0] == start) {
+    ret.erase(ret.begin());
+  }
+  return ret;
+}
+
+int World_map::travel_step_cost(Race traveler, Point p)
+{
+  if (OOB(p)) {
+    return 100;
+  }
+  if (travel_map.count(traveler)) {
+    int cost = travel_map[traveler].get_cost(p);
+    if (cost > 0) {
+      return cost;
+    }
+  }
+  int cost = travel_cost(p, traveler);
+  return (cost > 0 ? cost : 100);
 }
 
 bool World_map::has_road(Point p)

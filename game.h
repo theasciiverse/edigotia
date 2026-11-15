@@ -11,6 +11,7 @@ class  Player_city;
 struct World_design;
 class  World_map;
 class  Kingdom;
+class  Realm;
 
 class Game
 {
@@ -32,6 +33,12 @@ public:
   bool save_game();
 // Loads a game from the specified file
   bool load_game(std::string filename);
+// Asciiverse: once the player's city is loaded (Interface::load_game()), put
+// it on the world map and load its Realm, the living world around it.
+  void finish_loading();
+// The file the Realm of the current city is kept in.
+  std::string realm_filename();
+  void set_date(Date new_date) { date = new_date; }
 
 // Mutators
   void advance_time(int days = 1, City* city = NULL);
@@ -47,10 +54,13 @@ public:
   Kingdom* get_kingdom_for_race(Race race);
 
   int get_city_uid(); // Returns next_city_uid and advances next_city_uid.
+  int peek_city_uid() { return next_city_uid; }
+  void set_next_city_uid(int n) { next_city_uid = n; }
 
   World_map* world;
   std::vector<Kingdom*> kingdoms;
   Player_city* city;
+  Realm* realm;
 
 private:
   void generate_kingdoms(World_design* design);

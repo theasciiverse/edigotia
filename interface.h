@@ -48,6 +48,7 @@ enum Game_state
 };
 
 class Player_city;
+class AI_city;
 
 struct Command
 {
@@ -155,6 +156,22 @@ private:
   void luxury_management();
 // Lists active trades and allows the player to set up new ones
   void minister_trade();
+// Asciiverse: the world outside the walls (interface_realm.cpp)
+  void trade_new(bool buying);
+  void diplomacy_screen();
+  void city_dialogue(AI_city* city);
+  void military_screen();
+  void send_army_screen();
+  void realm_screen();
+  void liege_demand_dialogue();
+  void show_game_end();
+// After time passes: demands to answer, the end of the game.
+  void after_time_passes();
+// A scrolling list; returns the index chosen, or -1.  key is set to '\n',
+// KEY_ESC or whichever of keys was pressed.
+  int list_picker(std::string title, std::string header,
+                  std::vector<std::string> rows, std::string help,
+                  std::string keys, long& key, int start = 0);
 // Info on buildings; allows player to hire workers.
   void building_status();
   // Sets up the help box depending on circumstances

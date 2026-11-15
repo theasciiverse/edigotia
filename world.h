@@ -178,6 +178,10 @@ public:
 // specified race.
   int route_cost(Race traveler, Point start, Point end);
   int route_cost(Race traveler, int x0, int y0, int x1, int y1);
+// Asciiverse: the route itself, step by step, for armies on the march, and
+// the cost of one step on it.
+  std::vector<Point> travel_route(Race traveler, Point start, Point end);
+  int travel_step_cost(Race traveler, Point p);
 // Looks at adjacent tiles to decide which line drawing glyph to use
   glyph get_road_glyph(Point p);
   glyph get_road_glyph(int x, int y);
@@ -234,6 +238,7 @@ public:
   std::vector<City*> city_list;
 
 private:
+  std::map<int,City*> uid_lookup;  // Asciiverse: a cache for lookup_city_uid()
 
   void add_continent(Point origin, int height = 100, int step = 8, int id = 0);
   void add_river    (Point origin);

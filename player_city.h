@@ -132,6 +132,15 @@ public:
 
   int get_military_count();
   int get_military_supported();
+// Asciiverse: the soldiers stationed here, by type.
+  Troops get_troops();
+  void set_troops(Troops troops);
+// Draft citizens into soldiers, or let them go home.  recruit() returns a
+// reason it can't, or "" if it did.
+  std::string recruit(Unit_type type, int amount);
+  int  max_recruits(Unit_type type);
+  void disband(Unit_type type, int amount);
+  void soldiers_home(Troops troops);  // An army rejoins the garrison
 
 // Gain this many birth points each turn.  Based mostly on population.  When our
 // birth points reaches 100, a new citizen is born.

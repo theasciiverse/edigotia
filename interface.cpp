@@ -1,4 +1,5 @@
 #include "interface.h"
+#include "realm.h"
 #include "window.h"
 #include "cuss.h"
 #include "city.h"
@@ -28,6 +29,7 @@ Interface::Interface()
   show_terrain = false;
   current_area = AREA_NULL;
   temp_text = false;
+  game_state = GAME_NORMAL;
 }
 
 Interface::~Interface()
@@ -78,6 +80,9 @@ bool Interface::init()
 
   add_menu(MENU_WORLD, "World",
 "View Map",
+"Diplomacy",
+"Military",
+"Realm",
 0
 );
 
@@ -403,6 +408,9 @@ bool Interface::world_design_screen(World_design& design)
 
 void Interface::main_loop()
 {
+  if (game_state == GAME_QUIT) {  // Asciiverse: a reign that has ended
+    return;
+  }
   sel = Point(4, 4);
   city_radius = true;
 
@@ -474,6 +482,26 @@ void Interface::main_loop()
     if (game_state == GAME_QUIT) {
       done = true;
     }
+  }
+}
+
+// Asciiverse: once time has passed, answer what the world asks of you.
+void Interface::after_time_passes()
+{
+  Realm* realm = GAME->realm;
+  if (realm->game_end != GAME_END_NONE && !realm->end_seen) {
+    realm->end_seen = true;
+    show_game_end();
+    if (realm->game_end != GAME_END_CROWNED) {
+// The reign is over.  The save is kept, marked as ended.
+      GAME->save_game();
+      game_state = GAME_QUIT;
+      return;
+    }
+  }
+  if (realm->demand_type != LIEGE_DEMAND_NULL && !realm->demand_seen) {
+    realm->demand_seen = true;
+    liege_demand_dialogue();
   }
 }
 
@@ -633,10 +661,12 @@ resources spent to build it.", area_selected->get_name().c_str())) {
 // Move time forward by 1 day
         } else if (ch == '.') {
           GAME->advance_time(1, pl_city);
+          after_time_passes();
 
 // Move time forward by 1 week
         } else if (ch == '>') {
           GAME->advance_time(7, pl_city);
+          after_time_passes();
         }
 
         if (cur_data_mode == DATA_MODE_MESSAGES) {  // It has a few special keys
@@ -1120,6 +1150,16 @@ void Interface::do_menu_action(Menu_id menu, int index)
         case 1: // View map
           GAME->world->draw( pl_city->location, &(pl_city->world_seen) );
           break;
+// Asciiverse: the world beyond the walls.
+        case 2: // Diplomacy
+          diplomacy_screen();
+          break;
+        case 3: // Military
+          military_screen();
+          break;
+        case 4: // Realm
+          realm_screen();
+          break;
       }
       break;
 
@@ -1350,6 +1390,15 @@ bool Interface::load_game()
 // The game plays and saves GAME->city, so the loaded city has to be that one.
           GAME->city = cur_city;
           pl_city = cur_city;
+          GAME->finish_loading();
+// A reign that ended in defeat stays ended.
+          if (GAME->realm->game_end == GAME_END_FALLEN ||
+              GAME->realm->game_end == GAME_END_EMPTIED) {
+            show_game_end();
+            popup("This reign has ended.  Start a new city to play again.");
+            game_state = GAME_QUIT;
+            return true;
+          }
           return true;
         }
         break;
@@ -1439,7 +1488,9 @@ void Interface::minister_finance()
     income_taxes += citizen_taxes[i];
   }
 
-// TODO: Calculate trade income & expenses
+// Asciiverse: trade deals and tribute, from the Realm.
+  income_trade = GAME->realm->get_trade_income();
+  expense_trade = GAME->realm->get_trade_expense();
 
   income_mint = pl_city->get_resource_production(RES_GOLD);
 
@@ -3143,127 +3194,8 @@ enum Trade_screen
   TRADE_SCREEN_NEW,
 };
 
-void Interface::minister_trade()
-{
-  cuss::interface i_trade_supplies; // Our resource inventory
-  cuss::interface i_trade_active;   // Our active trades
-  cuss::interface i_trade_new;      // Set up a new trade
-
-  Trade_screen cur_screen = TRADE_SCREEN_SUPPLIES;
-
-  Window w_trade(0, 0, 80, 24);
-
-  if (!i_trade_supplies.load_from_file("cuss/trade_inventory.cuss")) {
-    return;
-  }
-
-  if (!i_trade_new.load_from_file("cuss/trade_new.cuss")) {
-    return;
-  }
-
-// Set up supplies screen
-  std::vector<std::string> resource_name, resource_amt,
-                           mineral_name, mineral_amt;
-
-// Start at 1 to skip RES_NULL
-  for (int i = 1; i < RES_MAX; i++) {
-    Resource res = Resource(i);
-    if (pl_city->has_resource(res)) {
-      resource_name.push_back( capitalize_all_words(Resource_data[res]->name) );
-      resource_amt.push_back( itos( pl_city->get_resource_amount(res) ) );
-    }
-  }
-
-// Start at 1 to skip MINERAL_NULL
-  for (int i = 1; i < MINERAL_MAX; i++) {
-    Mineral min = Mineral(i);
-    if (pl_city->has_mineral(min)) {
-      mineral_name.push_back( capitalize_all_words(Mineral_data[min]->name) );
-      mineral_amt.push_back( itos( pl_city->get_mineral_amount(min) ) );
-    }
-  }
-
-  i_trade_supplies.ref_data("list_resources",  &resource_name);
-  i_trade_supplies.ref_data("list_res_amount", &resource_amt );
-  i_trade_supplies.ref_data("list_minerals",   &mineral_name );
-  i_trade_supplies.ref_data("list_min_amount", &mineral_amt  );
-
-  i_trade_supplies.select("list_resources");
-
-
-// Set up new trade screen
-  std::vector<std::string> new_trade_resource, new_trade_sellers,
-                           new_trade_price;
-
-  for (int i = 1; i < RES_MAX; i++) {
-    Resource res = Resource(i);
-    std::vector<Trade_route> sellers = pl_city->find_sellers_of(res);
-    if (!sellers.empty()) {
-      std::string name = capitalize_all_words(Resource_data[res]->name);
-      new_trade_resource.push_back(name);
-      new_trade_sellers.push_back( itos(sellers.size()) );
-      int lowest_price = 99999;
-      for (int n = 0; n < sellers.size(); n++) {
-        Trade_route route = sellers[n];
-        City* city = GAME->world->get_city(route.target);
-        if (city) {
-          int price = city->get_price(res);
-          price += route.overhead;
-          if (price < lowest_price) {
-            lowest_price = price;
-          }
-        }
-      }
-      new_trade_price.push_back( itos(lowest_price) );
-    }
-  }
-
-  i_trade_new.ref_data("list_resource", &new_trade_resource);
-  i_trade_new.ref_data("list_sellers",  &new_trade_sellers);
-  i_trade_new.ref_data("list_price",    &new_trade_price);
-
-
-  bool done = false;
-
-  while (!done) {
-    switch (cur_screen) {
-
-      case TRADE_SCREEN_SUPPLIES: {
-
-        i_trade_supplies.draw(&w_trade);
-        w_trade.refresh();
-
-        long ch = input();
-
-        if (ch == 'q' || ch == 'Q') {
-          done = true;
-        } else if (ch == '3') {
-          cur_screen = TRADE_SCREEN_NEW;
-        } else {
-          i_trade_supplies.handle_keypress(ch);
-        }
-
-      } break;
-
-      case TRADE_SCREEN_NEW: {
-
-        i_trade_new.draw(&w_trade);
-        w_trade.refresh();
-
-        long ch = input();
-
-        if (ch == 'q' || ch == 'Q') {
-          done = true;
-        } else if (ch == '1') {
-          cur_screen = TRADE_SCREEN_SUPPLIES;
-        } else {
-          i_trade_new.handle_keypress(ch);
-        }
-
-      } break;
-    }
-  }
-}
+// Asciiverse: minister_trade() is in interface_realm.cpp now, with deals that
+// work.
 
 void Interface::building_status()
 {

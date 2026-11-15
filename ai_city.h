@@ -5,6 +5,7 @@
 #include "city.h"
 #include "glyph.h"  // For AI_city::get_glyph()
 #include "ai.h"     // For City_role
+#include "army.h"   // For the garrison
 #include <string>
 #include <istream>
 
@@ -56,6 +57,31 @@ public:
 // buildings_supported of all areas, minus existing buildings.
   int get_net_buildings_supported();
 
+/* Asciiverse: the other cities take their turns.  Each day they eat, grow (or
+ * go hungry), collect taxes, pay and recruit their garrison.  Every season or
+ * so, a city that has grown or shrunk lays out its farms and workshops again.
+ * The Realm (realm.h) saves this state with the player's game.
+ */
+  virtual void do_turn();
+  void replan();              // Lay out production again for our population
+  void refresh_trade();       // Demands and prices, e.g. after loading
+  std::string save_state();   // Everything that changes as the game goes on
+  bool load_state(std::istream& data);
+  int  get_population_cap();
+  int  get_garrison_target();
+  int  get_daily_income();
+  int  get_garrison_wages();
+  void recruit(int number);   // Add soldiers to the garrison, by our race
+  void lose_citizens(int number); // Spread over the classes, peasants first
+
+  Troops garrison;
+  int owner_kingdom;  // uid of the kingdom holding us now (-1: the player's)
+  bool besieged;      // An army is camped outside our walls
+  bool hungry;        // We ran out of food today
+  int birth_points;
+  int days_since_plan;
+  int plan_population;
+
 private:
 // add_farms(), add_hunting_camps(), and add_pastures() have two forms; one with
 // an int& and one without.  Use the one WITH the int& if you want to stop
@@ -92,6 +118,7 @@ private:
   void add_mineral_production(Mineral min, int amount);
 
   void init_demands();  // Looks at what we lack for recipes etc
+  void set_radius();    // Our control radius, from our population
   void set_price(Resource res);
 
 // *** DATA ***
