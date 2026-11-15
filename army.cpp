@@ -422,7 +422,7 @@ std::string Army::get_name()
   if (home) {
     return "the army of " + home->get_name();
   }
-  return "a rebel army";
+  return "the raiders";
 }
 
 glyph Army::get_glyph()

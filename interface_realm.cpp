@@ -774,8 +774,8 @@ void Interface::military_screen()
     w.putstr(40, 1, c_white, c_black, "Combat Strength:");
     int raw = troops_strength(troops, race, 100);
     w.putstr(40, 2, c_ltgray, c_black, "Total attack:      %6d", raw);
-    w.putstr(40, 3, c_ltgray, c_black, "Race (%s):    %4d%%",
-             Race_data[race]->name.substr(0, 4).c_str(),
+    w.putstr(40, 3, c_ltgray, c_black, "%-18s %6d%%",
+             (capitalize(Race_data[race]->plural_name) + ":").c_str(),
              Race_data[race]->base_combat * 10);
     w.putstr(40, 4, c_ltgray, c_black, "Behind your walls: %6d%%", 130);
     w.putstr(40, 5, c_yellow, c_black, "Defending:         %6d",

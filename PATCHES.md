@@ -37,7 +37,32 @@ upstream's `master` at `9beda6f` (2015-06-23), with its full history of
   before. The folders are set before the game data is initialised.
 - `LICENSE`: the GPL-3.0 text, as named on the start screen.
 
-Not added: session logging (left for a later release).
+## Diplomacy and war (v20150623-av.2 on)
+
+Not patches but a continuation: the parts of the game Whales planned and
+never built. `VISION.md` says what he meant and what was chosen without
+him; `ROADMAP.md` lists the releases. New files: `realm.h/.cpp` (the living
+world: other cities' turns, relations, treaties, trade deals, the liege,
+kingdom wars, armies and sieges, the end of the game), `army.h/.cpp`
+(soldiers and battles), `interface_realm.cpp` (the Trade, Diplomacy,
+Military and Realm screens), `help_realm.cpp` (their help articles),
+`log.h/.cpp` (the session log). Changes to Whales' files:
+
+- `ai_city.*`: the other cities take turns (`do_turn()`), keep a garrison,
+  replan their production, and save their state.
+- `game.*`: time passes a day at a time for the whole world; each city's
+  realm is saved beside it, and the world file is no longer rewritten on
+  save; a loaded city is put back on the world map.
+- `player_city.*`: imports and exports come from the realm's deals;
+  soldiers by type, recruiting and disbanding; soldiers' wages are paid.
+- `military.*`: a unit has a type.
+- `building_data.cpp`: the keep has room for a city guard of 20.
+- `world.*`: armies are drawn on the world map; routes for armies; a
+  faster city lookup.
+- `interface.*`: the World menu's new screens; the old trade screen is
+  replaced; the finance screen counts trade.
+- `help_data.cpp`, `init.cpp`, `main.cpp`: hooks for the above.
+- Session logging: `session.log` in the save folder.
 
 ## Packaging (new files)
 

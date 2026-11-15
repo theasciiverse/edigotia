@@ -6,6 +6,8 @@
 #include "stringfunc.h" // For capitalize()
 #include <sstream>
 
+void init_realm_help();
+
 #define _article(n) \
   cur_article = new Help_article( (n) ); \
   HELP->add_article(cur_article)
@@ -992,6 +994,9 @@ hard to pass, so you can place walls in the gaps between mountains.\
   _article("List of Races");
   _type("Index");
   _text( race_list_text.str() );
+
+// Asciiverse: articles for the world outside the walls (help_realm.cpp).
+  init_realm_help();
 
   HELP->process_categories();
 }

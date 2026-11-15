@@ -951,6 +951,22 @@ int Realm::give_gift(City* city, int gold)
     rel.opinion = 100;
   }
   rel.gift_days = 0;
+// A gift to your own lords buys favor too.
+  Kingdom* ours = player_kingdom();
+  if (!excommunicated && ours && ai->owner_kingdom == ours->uid) {
+    int favor = gold / 100;
+    if (favor > 10) {
+      favor = 10;
+    }
+    if (ai == get_liege()) {
+      change_liege_favor(favor);
+    } else if (ai->get_city_type() == CITY_TYPE_CAPITAL) {
+      favor_king += favor;
+      if (favor_king > 100) {
+        favor_king = 100;
+      }
+    }
+  }
   log_info("Gift of %d to %s: opinion +%d", gold, ai->get_name().c_str(), gain);
   return gain;
 }
@@ -1522,6 +1538,30 @@ void Realm::army_arrives(Army& army)
   }
 
 // ARMY_ORDER_ATTACK
+// Raiders: they fight for your stores, and take what they can if they win.
+  if (army.home_uid < 0 && target == player) {
+    Troops defenders = player->get_troops();
+    Battle_report rep = fight_battle(army.troops, army.race, defenders,
+                                     player->get_race(), 130);
+    player->set_troops(defenders);
+    std::stringstream ss;
+    if (rep.attacker_won) {
+      int gold = player->get_resource_amount(RES_GOLD) / 5;
+      int food = player->get_resource_amount(RES_FOOD) / 5;
+      player->expend_resource(RES_GOLD, gold);
+      player->expend_resource(RES_FOOD, food);
+      ss << "Raiders broke into " << player->get_name() << " and carried " <<
+            "off " << gold << " gold and " << food << " food. " << rep.summary;
+      player_message(MESSAGE_URGENT, ss.str());
+    } else {
+      ss << "Your soldiers drove off the raiders! " << rep.summary;
+      player_message(MESSAGE_MAJOR, ss.str());
+    }
+    army.troops.clear();
+    army.order = ARMY_ORDER_NULL;
+    return;
+  }
+
   bool still_enemy;
   if (army.player_owned) {
     still_enemy = at_war_with_player(target);
@@ -1709,6 +1749,7 @@ void Realm::conquer(Army& army, City* target)
   std::stringstream ss;
 
   if (army.player_owned) {
+    int conquered_from = ai_target->owner_kingdom;
     make_vassal(ai_target);
 // A quarter of the army stays to hold it; the rest march home.
     Troops stay;
@@ -1720,6 +1761,19 @@ void Realm::conquer(Army& army, City* target)
     ss << ai_target->get_name() << " has fallen to your army!  It is your " <<
           "vassal now, and pays you tribute.";
     player_message(MESSAGE_MAJOR, ss.str());
+// Taking a city from your kingdom's enemies pleases the crown.
+    Kingdom* ours = player_kingdom();
+    Kingdom* taken_from = (army.target_uid >= 0 ?
+                           lookup_kingdom(conquered_from) : NULL);
+    if (ours && taken_from && taken_from != ours && !excommunicated &&
+        kingdoms_at_war(ours->uid, taken_from->uid)) {
+      change_liege_favor(10);
+      favor_king += 10;
+      if (favor_king > 100) {
+        favor_king = 100;
+      }
+      player_message(MESSAGE_MINOR, "The crown is pleased with your victory.");
+    }
     army.order = ARMY_ORDER_ATTACK;
     recall_army(&army - &armies[0]);
     return;
@@ -2036,6 +2090,23 @@ void Realm::end_kingdom_war(int a, int b)
   }
 }
 
+// Do two kingdoms' cities sit close to each other?  Borders breed quarrels.
+static bool kingdoms_share_border(Realm* realm, int a, int b)
+{
+  for (int i = 0; i < realm->cities.size(); i++) {
+    if (realm->cities[i]->owner_kingdom != a) {
+      continue;
+    }
+    for (int j = 0; j < realm->cities.size(); j++) {
+      if (realm->cities[j]->owner_kingdom == b &&
+          rl_dist(realm->cities[i]->location, realm->cities[j]->location) <= 12) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 void Realm::monthly_kingdoms()
 {
   int nk = GAME->kingdoms.size();
@@ -2047,10 +2118,19 @@ void Realm::monthly_kingdoms()
       Kingdom* ka = GAME->kingdoms[i];
       Kingdom* kb = GAME->kingdoms[j];
       int a = ka->uid, b = kb->uid;
-      int base = Race_data[ka->race]->relations[kb->race] * 10;
+// What the races feel for each other, soured by shared borders and by a
+// warlike nature (Race_datum::warlikeness).
+      int base = (Race_data[ka->race]->relations[kb->race] * 2 +
+                  Race_data[kb->race]->relations[ka->race]) * 4;
+      if (kingdoms_share_border(this, a, b)) {
+        base -= 15;
+      }
+      int warlike = Race_data[ka->race]->warlikeness;
+      if (warlike > 0) {
+        base -= warlike * 10;
+      }
       int now = kingdom_opinion(a, b);
-// Opinions drift back toward what the races feel for each other.
-      int drift = (base - now) / 8 + rng(-4, 4);
+      int drift = (base - now) / 6 + rng(-8, 8);
       if (kingdoms_at_war(a, b)) {
         drift -= 2;
       }
@@ -2063,13 +2143,13 @@ void Realm::monthly_kingdoms()
       int a = GAME->kingdoms[i]->uid, b = GAME->kingdoms[j]->uid;
       if (kingdoms_at_war(a, b)) {
         int days = (k_war[a].count(b) ? k_war[a][b] : k_war[b][a]);
-        if (days > 240 && one_in(4)) {
+        if (days > 180 && rng(1, 100) <= 10 + (days - 180) / 15) {
           end_kingdom_war(a, b);
         }
         continue;
       }
       int opinion = (kingdom_opinion(a, b) + kingdom_opinion(b, a)) / 2;
-      if (opinion > -40) {
+      if (opinion > -25) {
         continue;
       }
 // The more warlike of the two decides.
@@ -2081,11 +2161,12 @@ void Realm::monthly_kingdoms()
         attacker = b;
         defender = a;
       }
-      int chance = 4 + (warlike + 3) * 3 + (-40 - opinion) / 5;
+      int chance = 2 + (warlike + 3) * 2 + (-25 - opinion) / 5;
 // Kingdoms already at war rarely start another.
       for (int n = 0; n < nk; n++) {
-        if (kingdoms_at_war(attacker, GAME->kingdoms[n]->uid)) {
-          chance /= 4;
+        if (kingdoms_at_war(attacker, GAME->kingdoms[n]->uid) ||
+            kingdoms_at_war(defender, GAME->kingdoms[n]->uid)) {
+          chance /= 3;
         }
       }
       if (rng(1, 100) <= chance) {
@@ -2195,8 +2276,8 @@ void Realm::change_liege_favor(int amount)
     favor_king += amount;
   } else {
     favor_duke += amount;
-// The king hears of it, a little.
-    favor_king += amount / 3;
+// The crown hears of it, through the duke.
+    favor_king += (amount > 0 ? (amount + 1) / 2 : amount / 2);
   }
   if (favor_duke > 100)  favor_duke = 100;
   if (favor_duke < -100) favor_duke = -100;
@@ -2560,6 +2641,60 @@ loan.");
 // Other cities act toward you: proposals and threats.
 void Realm::monthly_events()
 {
+/* Whales: "bandits and aggressive neighbors must be defended against".  After
+ * the first season, now and then a band of raiders comes for your stores.
+ */
+  int months = (GAME->get_date().get_year() - start_year) * 12 +
+               GAME->get_date().get_month();
+  if (months > 4 && rng(1, 100) <= 7) {
+    bool out = false;
+    for (int i = 0; i < armies.size(); i++) {
+      if (armies[i].home_uid < 0 && !armies[i].player_owned) {
+        out = true;
+      }
+    }
+    if (!out) {
+      Army army;
+      army.uid = next_army_uid++;
+      army.player_owned = false;
+      army.home_uid = -1;
+      army.target_uid = player->uid;
+      army.kingdom_uid = -1;
+      army.race = RACE_HUMAN;
+// Raiders of whatever race lives in the wild nearby.
+      if (!cities.empty()) {
+        army.race = cities[ rng(0, cities.size() - 1) ]->get_race();
+      }
+      army.order = ARMY_ORDER_ATTACK;
+      int size = 6 + player->get_total_population() / 12 + months / 3;
+      army.troops.count[UNIT_MILITIA] = size / 2;
+      army.troops.count[UNIT_SPEARMEN] = size - size / 2;
+// They come out of the wilds a few days' march away.
+      bool placed = false;
+      for (int tries = 0; tries < 30 && !placed; tries++) {
+        Point p(player->location.x + rng(-10, 10),
+                player->location.y + rng(-10, 10));
+        if (rl_dist(p, player->location) < 6 || GAME->world->OOB(p) ||
+            GAME->world->get_city(p) ||
+            GAME->world->travel_cost(p, army.race) <= 0) {
+          continue;
+        }
+        army.pos = p;
+        if (plan_path(army, player->location) && !army.path.empty()) {
+          placed = true;
+        }
+      }
+      if (placed) {
+        armies.push_back(army);
+        std::stringstream ss;
+        ss << "A band of " << army.troops.total() << " raiders has been seen " <<
+              "in the hills, heading for " << player->get_name() << "!";
+        player_message(MESSAGE_URGENT, ss.str());
+        return;
+      }
+    }
+  }
+
   if (!one_in(3)) {
     return;
   }
